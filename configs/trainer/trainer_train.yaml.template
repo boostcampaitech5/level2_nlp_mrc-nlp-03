@@ -1,0 +1,4 @@
+output_dir: ./outputs/train_dataset
+do_train: true
+do_eval: true
+overwrite_output_dir: true
