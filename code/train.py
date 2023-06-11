@@ -36,7 +36,7 @@ def main(cfg: DictConfig):
     data_args=DataTrainingArguments(**cfg.get("data"))
     training_args=TrainingArguments(**cfg.get("trainer"))
 
-    run_name = datetime.now(timezone(timedelta(hours=9)))
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
     training_args.run_name=run_name
 
     print(model_args.model_name_or_path)
