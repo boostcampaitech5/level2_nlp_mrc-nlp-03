@@ -137,7 +137,8 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            # return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=False if 'roberta' in model_args.model_name_or_path else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -229,7 +230,8 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            # return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=False if 'roberta' in model_args.model_name_or_path else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -279,7 +281,7 @@ def run_mrc(
     # Post-processing:
     def post_processing_function(examples, features, predictions, training_args):
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
-        predictions = postprocess_qa_predictions(
+        predictions, start_prediction_pos, context = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
@@ -300,7 +302,7 @@ def run_mrc(
             ]
             return EvalPrediction(
                 predictions=formatted_predictions, label_ids=references
-            )
+            ), start_prediction_pos, context
 
     metric = evaluate.load("squad")
 
@@ -354,13 +356,13 @@ def run_mrc(
     # Evaluation
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
-        metrics = trainer.evaluate()
-
+        metrics, eval_preds = trainer.evaluate()
         metrics["eval_samples"] = len(eval_dataset)
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
+        eval_preds.to_csv(os.path.join(training_args.output_dir, "eval_results.csv"), index=False)
 
 if __name__ == "__main__":
     main()
