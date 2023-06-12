@@ -1,7 +1,7 @@
 import random
 import numpy as np
 import torch
-import wandb
+import re
 from transformers import is_torch_available
 
 
@@ -22,10 +22,19 @@ def set_seed(seed: int = 42):
         torch.backends.cudnn.benchmark = False
 
 
-class WandbCallback:
-    def __init__(self, eval_dataset):
-        self.eval_dataset = eval_dataset
+def context_cleaning(context):
+    context = re.sub(r"\\+n", " ", context)
+    context = re.sub(r"\s+", " ", context)
+    return context
 
-    def __call__(self, trainer, model, **kwargs):
-        metrics = trainer.evaluate(eval_dataset=self.eval_dataset)
-        wandb.log(metrics)
+
+if __name__ == "__main__":
+    import json
+
+    with open("./data/wikipedia_documents.json", mode="r", encoding="utf-8") as f:
+        wiki = json.load(f)
+
+    print("*****original*****")
+    print(wiki["1"]["text"])
+    print("*****cleaned*****")
+    print(context_cleaning(wiki["1"]["text"]))
