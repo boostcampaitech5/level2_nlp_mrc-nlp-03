@@ -1023,7 +1023,6 @@ class BM25SparseRetrieval:
         tokenize_fn,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
-        ngram =2
     ) -> None:
         
         """
@@ -1058,8 +1057,7 @@ class BM25SparseRetrieval:
         self.ids = list(range(len(self.contexts)))
         self.tokenize_fn = tokenize_fn
 
-        self.ngram = ngram
-        self.bm25 = None # get_sparse_embedding()로 생성
+        self.p_embedding = None # get_sparse_embedding()로 생성
         self.indexer = None  # build_faiss()로 생성합니다.
 
         self.get_sparse_embedding()
@@ -1078,27 +1076,16 @@ class BM25SparseRetrieval:
         
         if os.path.isfile(bm25_path):
             with open(bm25_path, "rb") as file:
-                self.bm25 = pickle.load(file)
-            print("BM25 load.")
+                self.p_embedding = pickle.load(file)
+            print("Embedding pickle load.")
+            print("passage embedding shape : {}".format(self.p_embedding.shape))
+
         else:
             print("Build passage embedding")
 
-            tokenized_contexts = []
-            for idx,text in enumerate(tqdm(self.contexts,desc="BM25 Sparse embedding")):
-                tmp = []
-                start = 0
-                tmp.extend(self.tokenize_fn(text[start:start+512]))
-                while start+512 <= len(text):
-                    start += 512
-                    tmp.extend(self.tokenize_fn(text[start:start+512]))
-                
-                assert self.ngram <= len(tmp), f"tokenized 된 길이가 ngram({self.ngram}) 보다 작습니다."
-                tmp.extend([''.join(tmp[i:i+self.ngram]) for i in range(len(tmp)-self.ngram+1)])
-                tokenized_contexts.append(tmp)
-            
-            self.bm25 = BM25Okapi(tokenized_contexts)
+            self.p_embedding = BM25Okapi(self.contexts)
             with open(bm25_path, "wb") as file:
-                pickle.dump(self.bm25, file)
+                pickle.dump(self.p_embedding, file)
             print("BM25 pickle saved.")
 
     def build_faiss(self, num_clusters=64) -> None:
@@ -1124,7 +1111,7 @@ class BM25SparseRetrieval:
             self.indexer = faiss.read_index(indexer_path)
 
         else:
-            p_emb = self.bm25.astype(np.float32).toarray()
+            p_emb = self.p_embedding.astype(np.float32).toarray()
             emb_dim = p_emb.shape[-1]
 
             num_clusters = num_clusters
@@ -1144,7 +1131,7 @@ class BM25SparseRetrieval:
             topk: Optional[int] = 1,
     ) -> Union[Tuple[List, List], pd.DataFrame]:
 
-        assert self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
 
         if isinstance(query_or_dataset, str):
             doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
@@ -1189,34 +1176,27 @@ class BM25SparseRetrieval:
             return cqas
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
-        
-
-        tmp = []
-        tokenized_query = self.tokenize_fn(query)
-        tmp.extend(tokenized_query)
-        assert self.ngram <= len(tmp), f"tokenized 된 길이가 ngram({self.ngram}) 보다 작습니다."
-        for num_ngram in range(2,self.ngram+1):
-            tmp.extend([''.join(tokenized_query[i:i+num_ngram]) for i in range(len(tokenized_query)-num_ngram+1)])
-
-        scores, indices = self.bm25.get_top_n(tmp, self.contexts, n=k)
-            
-        return scores, indices
+        with timer("transform"):
+            tokenized_query = self.tokenize_fn(query)
+        with timer("query ex search"):
+            result = self.p_embedding.get_scores(tokenized_query)
+        sorted_result = np.argsort(result)[::-1]
+        doc_score = result[sorted_result].tolist()[:k]
+        doc_indices = sorted_result.tolist()[:k]
+        return doc_score, doc_indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
+        with timer("transform"):
+            tokenized_queris = [self.tokenize_fn(query) for query in queries]
+        with timer("query ex search"):
+            result = np.array([self.p_embedding.get_scores(tokenized_query) for tokenized_query in tqdm(tokenized_queris)])
         doc_scores = []
         doc_indices = []
-        for query in tqdm(queries, desc=f"Top-k({k}) retrieval: "):
-            tmp = []
-            tokenized_query = self.tokenize_fn(query)
-            tmp.extend(tokenized_query)
-            assert self.ngram <= len(tmp), f"tokenized 된 길이가 ngram({self.ngram}) 보다 작습니다."
-            for num_ngram in range(2,self.ngram+1):
-                tmp.extend([''.join(tokenized_query[i:i+num_ngram]) for i in range(len(tokenized_query)-num_ngram+1)])
-
-            scores, indices = self.bm25.get_top_n(tmp, self.contexts, n=k)
-            doc_scores.append(scores)
-            doc_indices.append(indices)
+        for i in range(result.shape[0]):
+            sorted_result = np.argsort(result[i, :])[::-1]
+            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
+            doc_indices.append(sorted_result.tolist()[:k])
         return doc_scores, doc_indices
 
     def retrieve_faiss(
@@ -1344,7 +1324,6 @@ if __name__ == "__main__":
             tokenize_fn=tokenizer.tokenize,
             data_path=args.data_path,
             context_path=args.context_path,
-            ngram=args.ngram,
         )
         with timer("bulk query by exhaustive search"):
             df = retriever.retrieve(full_ds, topk=args.topk)
