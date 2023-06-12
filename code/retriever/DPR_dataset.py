@@ -5,15 +5,18 @@ from torch.utils.data import Dataset
 
 class DPRDataset(Dataset):
     def __init__(
-        self, data_dir, tokenizer, mode, max_passage_length, max_question_length
+        self,
+        data_args,
+        tokenizer,
+        split,
     ):
-        dataset = load_from_disk(data_dir)[mode]
+        dataset = load_from_disk(data_args.dataset_name)[split]
         self.dataset = dataset.map(
             self.get_tokenized_passage,
             fn_kwargs={
                 "tokenizer": tokenizer,
-                "max_passage_length": max_passage_length,
-                "max_question_length": max_question_length,
+                "max_passage_length": data_args.max_passage_length,
+                "max_question_length": data_args.max_question_length,
             },
             remove_columns=dataset.column_names,
         )
@@ -40,19 +43,17 @@ class DPRDataset(Dataset):
             context,
             add_special_tokens=False,
             return_offsets_mapping=True,
-            return_tensors="pt",
         )
         tokenized_question = tokenizer(
             question,
             max_length=max_question_length,
             padding="max_length",
             truncation=True,
-            return_tensors="pt",
         )
         answer_char = example["answers"]["text"]
         start_char = example["answers"]["answer_start"][0]
         end_char = start_char + len(answer_char)
-        offset_mapping = tokenized_context.pop("offset_mapping").squeeze()
+        offset_mapping = tokenized_context.pop("offset_mapping")
         len_tokens = len(offset_mapping)
 
         def add_special_tokens(tokenized):
@@ -62,34 +63,22 @@ class DPRDataset(Dataset):
             """
 
             # 빈 string을 tokenize 했으므로 [CLS][SEP]만 나옵니다.
-            special_tokens = tokenizer("", return_tensors="pt")
-            special_tokens = {
-                k: torch.split(v, 1, dim=1) for k, v in special_tokens.items()
-            }
+            special_tokens = tokenizer("")
 
-            input_ids = torch.cat(
-                [
-                    special_tokens["input_ids"][0],
-                    tokenized["input_ids"],
-                    special_tokens["input_ids"][1],
-                ],
-                dim=1,
+            input_ids = (
+                [special_tokens["input_ids"][0]]
+                + tokenized["input_ids"]
+                + [special_tokens["input_ids"][1]]
             )
-            token_type_ids = torch.cat(
-                [
-                    special_tokens["token_type_ids"][0],
-                    tokenized["token_type_ids"],
-                    special_tokens["token_type_ids"][1],
-                ],
-                dim=1,
+            token_type_ids = (
+                [special_tokens["token_type_ids"][0]]
+                + tokenized["token_type_ids"]
+                + [special_tokens["token_type_ids"][1]]
             )
-            attention_mask = torch.cat(
-                [
-                    special_tokens["attention_mask"][0],
-                    tokenized["attention_mask"],
-                    special_tokens["attention_mask"][1],
-                ],
-                dim=1,
+            attention_mask = (
+                [special_tokens["attention_mask"][0]]
+                + tokenized["attention_mask"]
+                + [special_tokens["attention_mask"][1]]
             )
 
             tokenized = {
@@ -107,12 +96,12 @@ class DPRDataset(Dataset):
         if len_tokens <= max_passage_length:
             tokenized_context = add_special_tokens(tokenized_context)
             return {
-                "p_input_ids": tokenized_context["input_ids"].squeeze(),
-                "p_token_type_ids": tokenized_context["token_type_ids"].squeeze(),
-                "p_attention_mask": tokenized_context["attention_mask"].squeeze(),
-                "q_input_ids": tokenized_question["input_ids"].squeeze(),
-                "q_token_type_ids": tokenized_question["token_type_ids"].squeeze(),
-                "q_attention_mask": tokenized_question["attention_mask"].squeeze(),
+                "p_input_ids": tokenized_context["input_ids"],
+                "p_token_type_ids": tokenized_context["token_type_ids"],
+                "p_attention_mask": tokenized_context["attention_mask"],
+                "q_input_ids": tokenized_question["input_ids"],
+                "q_token_type_ids": tokenized_question["token_type_ids"],
+                "q_attention_mask": tokenized_question["attention_mask"],
             }
 
         # train.py의 prepare_train_features 함수와 같은 로직으로 정답 토큰을 찾습니다.
@@ -149,18 +138,18 @@ class DPRDataset(Dataset):
 
         tokenized_context = add_special_tokens(
             {
-                k: v[0, passage_start_index:passage_end_index].unsqueeze(0)
+                k: v[passage_start_index:passage_end_index]
                 for k, v in tokenized_context.items()
             }
         )
 
         return {
-            "p_input_ids": tokenized_context["input_ids"].squeeze(),
-            "p_token_type_ids": tokenized_context["token_type_ids"].squeeze(),
-            "p_attention_mask": tokenized_context["attention_mask"].squeeze(),
-            "q_input_ids": tokenized_question["input_ids"].squeeze(),
-            "q_token_type_ids": tokenized_question["token_type_ids"].squeeze(),
-            "q_attention_mask": tokenized_question["attention_mask"].squeeze(),
+            "p_input_ids": tokenized_context["input_ids"],
+            "p_token_type_ids": tokenized_context["token_type_ids"],
+            "p_attention_mask": tokenized_context["attention_mask"],
+            "q_input_ids": tokenized_question["input_ids"],
+            "q_token_type_ids": tokenized_question["token_type_ids"],
+            "q_attention_mask": tokenized_question["attention_mask"],
         }
 
 
@@ -170,5 +159,4 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
     dataset = DPRDataset("../data/train_dataset", tokenizer, "train", 384, 64)
 
-    for i in range(50):
-        print(dataset[i]["p_input_ids"].shape)
+    print(dataset[0]["p_input_ids"], dataset[0]["q_input_ids"])

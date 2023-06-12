@@ -1,5 +1,9 @@
+import hydra
+from utils_retriever import set_seed
+from omegaconf import DictConfig
 from DPR_model import DPR
 from DPR_dataset import DPRDataset
+from retriever_arguments import DataTrainingArguments, ModelArguments
 from transformers import (
     AutoTokenizer,
     Trainer,
@@ -7,19 +11,31 @@ from transformers import (
 )
 
 
-def main():
-    model = DPR("klue/bert-base")
-    tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
-    dataset = DPRDataset("../data/train_dataset", tokenizer, "train", 384, 64)
-    training_args = TrainingArguments(
-        output_dir="../test_output",
-        do_train=True,
-        num_train_epochs=3,
-        remove_unused_columns=False,
-        per_device_train_batch_size=32,
-        logging_steps=100,
+@hydra.main(version_base="1.3", config_path="./configs", config_name="train")
+def main(cfg: DictConfig):
+    model_args = ModelArguments(**cfg.get("model"))
+    data_args = DataTrainingArguments(**cfg.get("data"))
+    training_args = TrainingArguments(**cfg.get("trainer"), remove_unused_columns=False)
+
+    set_seed(training_args.seed)
+
+    model = DPR(model_args)
+    tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+    if training_args.do_train:
+        train_dataset = DPRDataset(data_args, tokenizer=tokenizer, split="train")
+    else:
+        train_dataset = None
+    if training_args.do_eval:
+        eval_dataset = DPRDataset(data_args, tokenizer=tokenizer, split="validation")
+    else:
+        eval_dataset = None
+
+    trainer = Trainer(
+        model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
     )
-    trainer = Trainer(model, args=training_args, train_dataset=dataset)
 
     trainer.train()
     trainer.save_model()

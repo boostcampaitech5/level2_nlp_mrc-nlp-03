@@ -5,4 +5,7 @@ models
 wandb
 data
 !configs/data
+!code/retriever/configs/data
 *.yaml
+*.out
+retriever_outputs
