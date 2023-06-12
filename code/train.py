@@ -31,13 +31,17 @@ def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
+    # ~/.bashrc에 다음과 같이 설정
+    # export WANDB_ENTITY=ggul_tiger
+    # export WANDB_PROJECT=MRC
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
+    cfg['trainer']['run_name']=run_name
+    wandb.init(config=cfg,id=run_name)
+
     # Argument 정의된 dataclass들을 instantiate
     model_args=ModelArguments(**cfg.get("model"))
     data_args=DataTrainingArguments(**cfg.get("data"))
     training_args=TrainingArguments(**cfg.get("trainer"))
-
-    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
-    training_args.run_name=run_name
 
     print(model_args.model_name_or_path)
     print(f"model is from {model_args.model_name_or_path}")
