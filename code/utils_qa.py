@@ -56,7 +56,7 @@ def postprocess_qa_predictions(
     features,
     predictions: Tuple[np.ndarray, np.ndarray],
     version_2_with_negative: bool = False,
-    n_best_size: int = 20,
+    n_best_size: int = 10,
     max_answer_length: int = 30,
     null_score_diff_threshold: float = 0.0,
     output_dir: Optional[str] = None,
@@ -237,7 +237,13 @@ def postprocess_qa_predictions(
 
         # best prediction을 선택합니다.
         if not version_2_with_negative:
-            all_predictions[example["id"]] = predictions[0]["text"]
+            if 'answers' in example.keys():
+                all_predictions[example["id"]] ={
+                    "pred": predictions[0]["text"],
+                    "label": example["answers"]["text"][0]
+                }
+            else:
+                all_predictions[example["id"]] = predictions[0]["text"]
         else:
             # else case : 먼저 비어 있지 않은 최상의 예측을 찾아야 합니다
             i = 0
@@ -256,9 +262,12 @@ def postprocess_qa_predictions(
                 all_predictions[example["id"]] = ""
             else:
                 all_predictions[example["id"]] = best_non_null_pred["text"]
-
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
-        all_nbest_json[example["id"]] = [
+        all_nbest_json[example["id"]] = [ {
+                'labels': example['answers']['text'][0]
+            } if 'answers' in example.keys() else {}
+            ]
+        all_nbest_json[example["id"]].extend([
             {
                 k: (
                     float(v)
@@ -268,7 +277,7 @@ def postprocess_qa_predictions(
                 for k, v in pred.items()
             }
             for pred in predictions
-        ]
+        ])
 
     # output_dir이 있으면 모든 dicts를 저장합니다.
     if output_dir is not None:
@@ -307,7 +316,7 @@ def postprocess_qa_predictions(
                     json.dumps(scores_diff_json, indent=4, ensure_ascii=False) + "\n"
                 )
 
-    return all_predictions
+    return {key:value["pred"] for key, value in all_predictions.items()}
 
 
 def check_no_error(

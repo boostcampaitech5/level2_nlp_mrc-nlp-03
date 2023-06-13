@@ -4,6 +4,7 @@ import sys
 
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
+from models import ReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -23,7 +24,11 @@ import hydra
 from omegaconf import DictConfig
 from datetime import datetime, timedelta, timezone
 import wandb
-
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ['TOKENIZERS_PARALLELISM'] = "false"
+os.environ['WANDB_SILENT']="true"
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = "true"
 logger = logging.getLogger(__name__)
 
 @hydra.main(version_base="1.3",config_path="../configs",config_name="train")
@@ -38,6 +43,7 @@ def main(cfg: DictConfig):
 
     run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
     training_args.run_name=run_name
+    training_args.output_dir = os.path.join(training_args.output_dir, run_name)
 
     print(model_args.model_name_or_path)
     print(f"model is from {model_args.model_name_or_path}")
@@ -51,7 +57,7 @@ def main(cfg: DictConfig):
     )
 
     # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
-    logger.info("Training/evaluation parameters %s", training_args)
+    # logger.info("Training/evaluation parameters %s", training_args)
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
@@ -72,9 +78,8 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
 
@@ -133,7 +138,7 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            # return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -324,7 +329,7 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        train_result = trainer.train()
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
