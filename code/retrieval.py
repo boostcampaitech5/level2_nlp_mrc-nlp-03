@@ -13,7 +13,7 @@ from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from tqdm.auto import tqdm
-from bm25 import BM25Okapi, BM25L, BM25Plus
+from rank_bm25 import BM25Okapi
 
 @contextmanager
 def timer(name):
@@ -1089,23 +1089,6 @@ class BM25SparseRetrieval:
                 pickle.dump(self.p_embedding, file)
             print("BM25 pickle saved.")
 
-    # def build_faiss(self, num_clusters=64) -> None:
-
-    #     """
-    #     Summary:
-    #         속성으로 저장되어 있는 Passage Embedding을
-    #         Faiss indexer에 fitting 시켜놓습니다.
-    #         이렇게 저장된 indexer는 `get_relevant_doc`에서 유사도를 계산하는데 사용됩니다.
-
-    #     Note:
-    #         Faiss는 Build하는데 시간이 오래 걸리기 때문에,
-    #         매번 새롭게 build하는 것은 비효율적입니다.
-    #         그렇기 때문에 build된 index 파일을 저정하고 다음에 사용할 때 불러옵니다.
-    #         다만 이 index 파일은 용량이 1.4Gb+ 이기 때문에 여러 num_clusters로 시험해보고
-    #         제일 적절한 것을 제외하고 모두 삭제하는 것을 권장합니다.
-    #     """
-    #     pass
-
     def retrieve(
             self, 
             query_or_dataset: Union[str, Dataset], 
@@ -1141,7 +1124,6 @@ class BM25SparseRetrieval:
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
-                    # "context_id": doc_indices[idx],
                     "context": " ".join(
                         [self.contexts[pid] for pid in doc_indices[idx]]
                     ),
@@ -1150,7 +1132,6 @@ class BM25SparseRetrieval:
                     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
                     tmp["original_context"] = example["context"]
                     tmp["answers"] = example["answers"]
-                    # tmp["score"] = doc_scores[idx]
                 total.append(tmp)
 
             cqas = pd.DataFrame(total)
@@ -1179,21 +1160,6 @@ class BM25SparseRetrieval:
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
             doc_indices.append(sorted_result.tolist()[:k])
         return doc_scores, doc_indices
-
-    # def retrieve_faiss(
-    #     self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
-    # ) -> Union[Tuple[List, List], pd.DataFrame]:
-    #     pass
-
-    # def get_relevant_doc_faiss(
-    #     self, query: str, k: Optional[int] = 1
-    # ) -> Tuple[List, List]:
-    #     pass
-
-    # def get_relevant_doc_bulk_faiss(
-    #     self, queries: List, k: Optional[int] = 1
-    # ) -> Tuple[List, List]:
-    #     pass
 
 
 def get_args():
