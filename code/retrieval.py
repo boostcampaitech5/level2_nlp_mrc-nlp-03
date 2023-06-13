@@ -13,7 +13,7 @@ from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from tqdm.auto import tqdm
-from rank_bm25 import BM25Okapi
+from rank_bm25 import BM25Okapi, BM25Plus
 
 @contextmanager
 def timer(name):
@@ -1017,7 +1017,7 @@ class SparseRetrieval(_BaseSparseRetriever):
         return D.tolist(), I.tolist()
 
 
-class BM25SparseRetrieval:
+class BM25SparseRetrieval(_BaseSparseRetriever):
     def __init__(
         self,
         tokenize_fn,
@@ -1054,10 +1054,11 @@ class BM25SparseRetrieval:
             dict.fromkeys([v["text"] for v in wiki.values()])
         )  # set 은 매번 순서가 바뀌므로
         print(f"Lengths of unique contexts : {len(self.contexts)}")
-        self.ids = list(range(len(self.contexts)))
+        # self.ids = list(range(len(self.contexts)))
+        self.ids = np.array(list(dict.fromkeys([v["document_id"] for v in wiki.values()])))
         self.tokenize_fn = tokenize_fn
 
-        self.p_embedding = None # get_sparse_embedding()로 생성
+        self.bm25 = None # get_sparse_embedding()로 생성
         self.indexer = None  # build_faiss()로 생성합니다.
 
         self.get_sparse_embedding()
@@ -1076,17 +1077,18 @@ class BM25SparseRetrieval:
         
         if os.path.isfile(bm25_path):
             with open(bm25_path, "rb") as file:
-                self.p_embedding = pickle.load(file)
+                self.bm25 = pickle.load(file)
             print("Embedding pickle load.")
-            print("passage embedding shape : {}".format(self.p_embedding.corpus_size))
+            
+            # print("passage embedding shape : {}".format(self.bm25.corpus_size))
 
         else:
             print("Build passage embedding")
             # tokenized_corpus = [self.tokenize_fn(title + text) for title, text in zip(self.wiki_title, self.wiki_text)]
-            # self.bm25 = BM25Plus(tokenized_corpus)
-            self.p_embedding = BM25Okapi(self.contexts, tokenizer=self.tokenize_fn)
+            self.bm25 = BM25Okapi(self.contexts, tokenizer=self.tokenize_fn)
+            # self.bm25 = BM25Plus(self.contexts, tokenizer=self.tokenize_fn)
             with open(bm25_path, "wb") as file:
-                pickle.dump(self.p_embedding, file)
+                pickle.dump(self.bm25, file)
             print("BM25 pickle saved.")
 
     def retrieve(
@@ -1095,7 +1097,7 @@ class BM25SparseRetrieval:
             topk: Optional[int] = 1,
     ) -> Union[Tuple[List, List], pd.DataFrame]:
 
-        assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+        assert self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
 
         if isinstance(query_or_dataset, str):
             doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
@@ -1141,10 +1143,11 @@ class BM25SparseRetrieval:
         with timer("transform"):
             tokenized_query = self.tokenize_fn(query)
         with timer("query ex search"):
-            result = self.p_embedding.get_scores(tokenized_query)
+            result = self.bm25.get_scores(tokenized_query)
         sorted_result = np.argsort(result)[::-1]
         doc_score = result[sorted_result].tolist()[:k]
-        doc_indices = sorted_result.tolist()[:k]
+        # doc_indices = sorted_result.tolist()[:k]
+        doc_indices = self.ids[sorted_result].tolist()[:k]
         return doc_score, doc_indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1
@@ -1152,13 +1155,14 @@ class BM25SparseRetrieval:
         with timer("transform"):
             tokenized_queris = [self.tokenize_fn(query) for query in queries]
         with timer("query ex search"):
-            result = np.array([self.p_embedding.get_scores(tokenized_query) for tokenized_query in tqdm(tokenized_queris)])
+            result = np.array([self.bm25.get_scores(tokenized_query) for tokenized_query in tqdm(tokenized_queris)])
         doc_scores = []
         doc_indices = []
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices.append(sorted_result.tolist()[:k])
+            # doc_indices.append(sorted_result.tolist()[:k])
+            doc_indices.append(self.ids[sorted_result].tolist()[:k])
         return doc_scores, doc_indices
 
 
@@ -1179,7 +1183,7 @@ def get_args():
     parser.add_argument(
         "--context_path", default="wikipedia_documents.json", type=str, help=""
     )
-    parser.add_argument("--method", default='tfidf', type=str, help="")
+    parser.add_argument("--method", default='bm25', type=str, help="")
     parser.add_argument("--topk", default=10, type=int, help="")
 
     args = parser.parse_args()
