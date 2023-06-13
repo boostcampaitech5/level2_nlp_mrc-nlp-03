@@ -23,6 +23,7 @@ import hydra
 from omegaconf import DictConfig
 from datetime import datetime, timedelta, timezone
 import wandb
+from utils_viewer import df2html
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ def main(cfg: DictConfig):
     if training_args.do_train or training_args.do_eval:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
+    wandb.finish()
 
 def run_mrc(
     data_args: DataTrainingArguments,
@@ -362,7 +364,9 @@ def run_mrc(
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-        eval_preds.to_csv(os.path.join(training_args.output_dir, "eval_results.csv"), index=False)
+        csv_path=os.path.join(training_args.output_dir, "eval_results.csv")
+        eval_preds.to_csv(csv_path, index=False)
+        df2html(csv_path)
 
 if __name__ == "__main__":
     main()
