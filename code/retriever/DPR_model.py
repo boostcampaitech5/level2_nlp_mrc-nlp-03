@@ -1,4 +1,6 @@
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, AutoConfig
+from typing import Optional
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,9 +11,13 @@ class BaseEncoder(nn.Module):
     Base Dense Passage Encoder Model
     """
 
-    def __init__(self, model_checkpoint):
+    def __init__(self, model_name: str, for_train: bool):
         super().__init__()
-        self.encoder = AutoModel.from_pretrained(model_checkpoint)
+        if for_train:
+            self.encoder = AutoModel.from_pretrained(model_name)
+        else:
+            config = AutoConfig.from_pretrained(model_name)
+            self.encoder = AutoModel.from_config(config)
 
     def forward(self, inputs):
         outputs = self.encoder(**inputs)
@@ -23,10 +29,24 @@ class DPR(nn.Module):
     Dense Passage Retriever
     """
 
-    def __init__(self, model_args):
+    def __init__(
+        self,
+        model_name: Optional[str],
+        for_train: bool,
+        output_dir: Optional[str] = None,
+    ):
         super().__init__()
-        self.q_encoder = BaseEncoder(model_args.model_name_or_path)
-        self.p_encoder = BaseEncoder(model_args.model_name_or_path)
+        if not for_train:
+            with open(
+                os.path.join(output_dir, "encoder_model_name.txt"), mode="r"
+            ) as f:
+                model_name = f.readline()
+        self.q_encoder = BaseEncoder(model_name, for_train)
+        self.p_encoder = BaseEncoder(model_name, for_train)
+        if not for_train:
+            self.load_state_dict(
+                torch.load(os.path.join(output_dir, "pytorch_model.bin"))
+            )
 
     def forward(
         self,

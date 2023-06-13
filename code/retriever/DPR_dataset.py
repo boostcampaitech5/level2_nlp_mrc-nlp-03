@@ -1,14 +1,19 @@
 import torch
+import json
+import pandas as pd
 from datasets import load_from_disk
 from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizer
+from retriever.retriever_arguments import DataTrainingArguments
+from tqdm.auto import tqdm
 
 
 class DPRDataset(Dataset):
     def __init__(
         self,
-        data_args,
-        tokenizer,
-        split,
+        data_args: DataTrainingArguments,
+        tokenizer: PreTrainedTokenizer,
+        split: str,
     ):
         dataset = load_from_disk(data_args.dataset_name)[split]
         self.dataset = dataset.map(
@@ -153,10 +158,60 @@ class DPRDataset(Dataset):
         }
 
 
+class PassageDataset(Dataset):
+    def __init__(self, passage_dir: str, tokenizer: PreTrainedTokenizer, max_len: int):
+        with open(passage_dir, "r", encoding="utf-8") as f:
+            passages = json.load(f)
+        passages = pd.DataFrame(passages).T
+        batch_size = 1024
+        iteration = len(passages) // batch_size + bool(len(passages) % batch_size)
+        self.data = {
+            "input_ids": [],
+            "token_type_ids": [],
+            "attention_mask": [],
+            "document_id": [],
+        }
+        for i in tqdm(range(iteration), desc="passage tokenize", total=iteration):
+            s = i * batch_size
+            e = min((i + 1) * batch_size, len(passages))
+            tokenized = tokenizer(
+                passages["text"][s:e].to_list(),
+                max_length=max_len,
+                padding="max_length",
+                truncation=True,
+            )
+            self.data["input_ids"].extend(tokenized["input_ids"])
+            self.data["token_type_ids"].extend(tokenized["token_type_ids"])
+            self.data["attention_mask"].extend(tokenized["attention_mask"])
+            self.data["document_id"].extend(passages["document_id"][s:e].to_list())
+
+        # self.data = [
+        #     {
+        #         **tokenizer(
+        #             v["text"],
+        #             max_length=max_len,
+        #             padding="max_length",
+        #             truncation=True,
+        #         ),
+        #         "document_id": v["document_id"],
+        #     }
+        #     for v in tqdm(passages, desc="tokenize", total=len(passages))
+        # ]
+
+    def __len__(self):
+        return len(self.data["input_ids"])
+
+    def __getitem__(self, index):
+        return {k: v[index] for k, v in self.data.items()}
+
+
 if __name__ == "__main__":
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
-    dataset = DPRDataset("../data/train_dataset", tokenizer, "train", 384, 64)
 
-    print(dataset[0]["p_input_ids"], dataset[0]["q_input_ids"])
+    dataset = PassageDataset(
+        "/opt/level2_nlp_mrc-nlp-03/data/wikipedia_passages.json", tokenizer, 384
+    )
+
+    print(dataset[0])

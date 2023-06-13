@@ -1,4 +1,0 @@
-_target_: retrieval.FaissRetriever
-num_clusters: 64
-data_path: ./data/
-context_path: wikipedia_documents.json

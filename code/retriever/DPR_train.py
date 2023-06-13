@@ -1,4 +1,5 @@
 import hydra
+import os
 from utils_retriever import set_seed
 from omegaconf import DictConfig
 from DPR_model import DPR
@@ -19,7 +20,7 @@ def main(cfg: DictConfig):
 
     set_seed(training_args.seed)
 
-    model = DPR(model_args)
+    model = DPR(model_args.model_name_or_path, for_train=True)
     tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
     if training_args.do_train:
         train_dataset = DPRDataset(data_args, tokenizer=tokenizer, split="train")
@@ -40,6 +41,10 @@ def main(cfg: DictConfig):
     trainer.train()
     trainer.save_model()
     trainer.save_state()
+    with open(
+        os.path.join(training_args.output_dir, "encoder_model_name.txt"), mode="w"
+    ) as f:
+        f.write(model_args.model_name_or_path)
 
 
 if __name__ == "__main__":
