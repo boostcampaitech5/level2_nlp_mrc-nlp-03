@@ -24,6 +24,7 @@ import random
 from typing import Any, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict
@@ -111,6 +112,7 @@ def postprocess_qa_predictions(
 
     # prediction, nbest에 해당하는 OrderedDict 생성합니다.
     all_predictions = collections.OrderedDict()
+    prediction_start_pos = collections.OrderedDict()
     all_nbest_json = collections.OrderedDict()
     if version_2_with_negative:
         scores_diff_json = collections.OrderedDict()
@@ -215,6 +217,7 @@ def postprocess_qa_predictions(
         context = example["context"]
         for pred in predictions:
             offsets = pred.pop("offsets")
+            pred["prediction_start"] = offsets[0]
             pred["text"] = context[offsets[0] : offsets[1]]
 
         # rare edge case에는 null이 아닌 예측이 하나도 없으며 failure를 피하기 위해 fake prediction을 만듭니다.
@@ -223,7 +226,7 @@ def postprocess_qa_predictions(
         ):
 
             predictions.insert(
-                0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0}
+                0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0, "prediction_start":0}
             )
 
         # 모든 점수의 소프트맥스를 계산합니다(we do it with numpy to stay independent from torch/tf in this file, using the LogSumExp trick).
@@ -244,6 +247,7 @@ def postprocess_qa_predictions(
                 }
             else:
                 all_predictions[example["id"]] = predictions[0]["text"]
+            prediction_start_pos[example["id"]] = predictions[0]["prediction_start"]
         else:
             # else case : 먼저 비어 있지 않은 최상의 예측을 찾아야 합니다
             i = 0
@@ -260,8 +264,11 @@ def postprocess_qa_predictions(
             scores_diff_json[example["id"]] = float(score_diff)  # JSON-serializable 가능
             if score_diff > null_score_diff_threshold:
                 all_predictions[example["id"]] = ""
+                prediction_start_pos[example["id"]]=0
             else:
                 all_predictions[example["id"]] = best_non_null_pred["text"]
+                prediction_start_pos[example["id"]]=best_non_null_pred['prediction_start']
+
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
         all_nbest_json[example["id"]] = [ {
                 'labels': example['answers']['text'][0]
@@ -315,8 +322,8 @@ def postprocess_qa_predictions(
                 writer.write(
                     json.dumps(scores_diff_json, indent=4, ensure_ascii=False) + "\n"
                 )
-
-    return {key:value["pred"] for key, value in all_predictions.items()}
+    all_predictions = {key:value["pred"] for key, value in all_predictions.items()}
+    return all_predictions, prediction_start_pos, list(examples['context'])
 
 
 def check_no_error(
