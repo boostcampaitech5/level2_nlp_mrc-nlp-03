@@ -1,0 +1,3 @@
+_target_: retriever.retrieval.BM25SparseRetrieval
+data_path: ./data/
+context_path: wikipedia_documents.json
