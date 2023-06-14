@@ -4,8 +4,12 @@ import pandas as pd
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
-from retriever.retriever_arguments import DataTrainingArguments
 from tqdm.auto import tqdm
+
+try:
+    from retriever.retriever_arguments import DataTrainingArguments
+except ImportError:
+    from retriever_arguments import DataTrainingArguments
 
 
 class DPRDataset(Dataset):

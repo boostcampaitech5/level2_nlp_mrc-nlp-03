@@ -3,25 +3,25 @@ import os
 import pickle
 import time
 import torch
+import faiss
+import numpy as np
+import pandas as pd
 from torch.utils.data import DataLoader
-from retriever.DPR_model import (
-    DPR,
-)  # 이 파일을 실행할 때는 retriever.을 떼줘야 실행이 됩니다. inference.py에서 불러오기 위해 붙여놨습니다.
-from retriever.DPR_dataset import (
-    PassageDataset,
-)  # 이 파일을 이곳 저곳에서 불러서 쓰다 보니까 경로가 꼬여서 import가 잘 안 됩니다... 곧 고치도록 하겠습니다.
 from contextlib import contextmanager
 from abc import abstractmethod
 from typing import List, Optional, Tuple, Union
 from transformers import AutoTokenizer
-
-import faiss
-import numpy as np
-import pandas as pd
 from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from tqdm.auto import tqdm
+
+try:
+    from retriever.DPR_model import DPR
+    from retriever.DPR_dataset import PassageDataset
+except ImportError:
+    from DPR_model import DPR
+    from DPR_dataset import PassageDataset
 
 
 @contextmanager
@@ -1222,7 +1222,7 @@ class BaseDenseRetriever:
                     top_k_indeces.append(sorted_result[index])
                     doc_ids.append(doc_id)
                 index += 1
-            doc_scores = result.squeeze()[top_k_indeces].tolist()
+            doc_scores = result[i, :][top_k_indeces].tolist()
             bulk_doc_scores.append(doc_scores)
             bulk_doc_ids.append(doc_ids)
         return bulk_doc_scores, bulk_doc_ids
