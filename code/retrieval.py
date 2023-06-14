@@ -1049,13 +1049,14 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
         self.data_path = data_path
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
+            df = pd.DataFrame(wiki).T
+            df.drop_duplicates('text',inplace=True)
+            self.contexts = list(df.text)
+            self.ids = np.array(list(df.document_id))
+            self.df = df[["text","document_id"]]
 
-        self.contexts = list(
-            dict.fromkeys([v["text"] for v in wiki.values()])
-        )  # set 은 매번 순서가 바뀌므로
         print(f"Lengths of unique contexts : {len(self.contexts)}")
-        # self.ids = list(range(len(self.contexts)))
-        self.ids = np.array(list(dict.fromkeys([v["document_id"] for v in wiki.values()])))
+
         self.tokenize_fn = tokenize_fn
 
         self.bm25 = None # get_sparse_embedding()로 생성
@@ -1084,7 +1085,6 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
 
         else:
             print("Build passage embedding")
-            # tokenized_corpus = [self.tokenize_fn(title + text) for title, text in zip(self.wiki_title, self.wiki_text)]
             self.bm25 = BM25Okapi(self.contexts, tokenizer=self.tokenize_fn)
             # self.bm25 = BM25Plus(self.contexts, tokenizer=self.tokenize_fn)
             with open(bm25_path, "wb") as file:
@@ -1105,9 +1105,9 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
 
             for i in range(topk):
                 print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
-                print(self.contexts[doc_indices[i]])
+                print(self.df.text[str(doc_indices[i])])
 
-            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
+            return (doc_scores, [self.df.text[str(doc_indices[i])] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
 
@@ -1127,7 +1127,7 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
                     "context": " ".join(
-                        [self.contexts[pid] for pid in doc_indices[idx]]
+                        [self.df.text[str(pid)] for pid in doc_indices[idx]]
                     ),
                 }
                 if "context" in example.keys() and "answers" in example.keys():
@@ -1144,11 +1144,10 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
             tokenized_query = self.tokenize_fn(query)
         with timer("query ex search"):
             result = self.bm25.get_scores(tokenized_query)
+
         sorted_result = np.argsort(result)[::-1]
         doc_score = result[sorted_result].tolist()[:k]
-        doc_indices = sorted_result.tolist()[:k]
-        # doc_indices = self.ids[sorted_result].tolist()[:k]
-        print(doc_indices)
+        doc_indices = self.ids[sorted_result].tolist()[:k]
         return doc_score, doc_indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1
@@ -1162,8 +1161,7 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices.append(sorted_result.tolist()[:k])
-            # doc_indices.append(self.ids[sorted_result].tolist()[:k])
+            doc_indices.append(self.ids[sorted_result].tolist()[:k])
         return doc_scores, doc_indices
 
 
