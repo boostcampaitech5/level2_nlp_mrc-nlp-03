@@ -15,7 +15,6 @@ from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from tqdm.auto import tqdm
-
 try:
     from retriever.DPR_model import DPR
     from retriever.DPR_dataset import PassageDataset
@@ -23,6 +22,7 @@ except ImportError:
     from DPR_model import DPR
     from DPR_dataset import PassageDataset
 
+from rank_bm25 import BM25Okapi, BM25Plus
 
 @contextmanager
 def timer(name):
@@ -220,9 +220,9 @@ class TfidfRetriever(_BaseSparseRetriever):
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
-                    "context": " ".join(
+                    "context":
                         [self.contexts[pid] for pid in doc_indices[idx]]
-                    ),
+                    ,
                 }
                 if "context" in example.keys() and "answers" in example.keys():
                     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
@@ -658,7 +658,7 @@ class FaissRetriever(_BaseSparseRetriever):
         return D.tolist(), I.tolist()
 
 
-class SparseRetrieval:
+class SparseRetrieval(_BaseSparseRetriever):
     def __init__(
         self,
         tokenize_fn,
@@ -1227,6 +1227,153 @@ class BaseDenseRetriever:
             bulk_doc_ids.append(doc_ids)
         return bulk_doc_scores, bulk_doc_ids
 
+class BM25SparseRetrieval(_BaseSparseRetriever):
+    def __init__(
+        self,
+        tokenize_fn,
+        data_path: Optional[str] = "../data/",
+        context_path: Optional[str] = "wikipedia_documents.json",
+    ) -> None:
+        
+        """
+        Arguments:
+            tokenize_fn:
+                기본 text를 tokenize해주는 함수입니다.
+                아래와 같은 함수들을 사용할 수 있습니다.
+                - lambda x: x.split(' ')
+                - Huggingface Tokenizer
+                - konlpy.tag의 Mecab
+
+            data_path:
+                데이터가 보관되어 있는 경로입니다.
+
+            context_path:
+                Passage들이 묶여있는 파일명입니다.
+
+            data_path/context_path가 존재해야합니다.
+
+        Summary:
+            Passage 파일을 불러오고 TfidfVectorizer를 선언하는 기능을 합니다.
+        """
+
+        self.data_path = data_path
+        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+            wiki = json.load(f)
+
+        self.contexts = list(
+            dict.fromkeys([v["text"] for v in wiki.values()])
+        )  # set 은 매번 순서가 바뀌므로
+        print(f"Lengths of unique contexts : {len(self.contexts)}")
+        # self.ids = list(range(len(self.contexts)))
+        self.ids = np.array(list(dict.fromkeys([v["document_id"] for v in wiki.values()])))
+        self.tokenize_fn = tokenize_fn
+
+        self.bm25 = None # get_sparse_embedding()로 생성
+        self.indexer = None  # build_faiss()로 생성합니다.
+
+        self.get_sparse_embedding()
+
+    def get_sparse_embedding(self) -> None:
+
+        """
+        Summary:
+            Passage Embedding을 만들고
+            bm25와 Embedding을 pickle로 저장합니다.
+            만약 미리 저장된 파일이 있으면 저장된 pickle을 불러옵니다.
+        """
+
+        bm25_name = f"bm25.bin"
+        bm25_path = os.path.join(self.data_path, bm25_name)
+        
+        if os.path.isfile(bm25_path):
+            with open(bm25_path, "rb") as file:
+                self.bm25 = pickle.load(file)
+            print("Embedding pickle load.")
+            
+            # print("passage embedding shape : {}".format(self.bm25.corpus_size))
+
+        else:
+            print("Build passage embedding")
+            # tokenized_corpus = [self.tokenize_fn(title + text) for title, text in zip(self.wiki_title, self.wiki_text)]
+            self.bm25 = BM25Okapi(self.contexts, tokenizer=self.tokenize_fn)
+            # self.bm25 = BM25Plus(self.contexts, tokenizer=self.tokenize_fn)
+            with open(bm25_path, "wb") as file:
+                pickle.dump(self.bm25, file)
+            print("BM25 pickle saved.")
+
+    def retrieve(
+            self, 
+            query_or_dataset: Union[str, Dataset], 
+            topk: Optional[int] = 1,
+    ) -> Union[Tuple[List, List], pd.DataFrame]:
+
+        assert self.bm25 is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+
+        if isinstance(query_or_dataset, str):
+            doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
+            print("[Search query]\n", query_or_dataset, "\n")
+
+            for i in range(topk):
+                print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
+                print(self.contexts[doc_indices[i]])
+
+            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
+
+        elif isinstance(query_or_dataset, Dataset):
+
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                # doc_scores, doc_indices -> (num_query, top_k)
+                doc_scores, doc_indices = self.get_relevant_doc_bulk(
+                    query_or_dataset["question"], k=topk
+                )
+            for idx, example in enumerate(
+                tqdm(query_or_dataset, desc="Sparse retrieval: ")
+            ):
+                tmp = {
+                    # Query와 해당 id를 반환합니다.
+                    "question": example["question"],
+                    "id": example["id"],
+                    # Retrieve한 Passage의 id, context를 반환합니다.
+                    "context": " ".join(
+                        [self.contexts[pid] for pid in doc_indices[idx]]
+                    ),
+                }
+                if "context" in example.keys() and "answers" in example.keys():
+                    # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                    tmp["original_context"] = example["context"]
+                    tmp["answers"] = example["answers"]
+                total.append(tmp)
+
+            cqas = pd.DataFrame(total)
+            return cqas
+
+    def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
+        with timer("transform"):
+            tokenized_query = self.tokenize_fn(query)
+        with timer("query ex search"):
+            result = self.bm25.get_scores(tokenized_query)
+        sorted_result = np.argsort(result)[::-1]
+        doc_score = result[sorted_result].tolist()[:k]
+        doc_indices = sorted_result.tolist()[:k]
+        # doc_indices = self.ids[sorted_result].tolist()[:k]
+        return doc_score, doc_indices
+
+    def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1
+    ) -> Tuple[List, List]:
+        with timer("transform"):
+            tokenized_queris = [self.tokenize_fn(query) for query in queries]
+        with timer("query ex search"):
+            result = np.array([self.bm25.get_scores(tokenized_query) for tokenized_query in tqdm(tokenized_queris)])
+        doc_scores = []
+        doc_indices = []
+        for i in range(result.shape[0]):
+            sorted_result = np.argsort(result[i, :])[::-1]
+            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
+            doc_indices.append(sorted_result.tolist()[:k])
+            # doc_indices.append(self.ids[sorted_result].tolist()[:k])
+        return doc_scores, doc_indices
 
 def get_args():
     import argparse
@@ -1237,7 +1384,7 @@ def get_args():
     )
     parser.add_argument(
         "--model_name_or_path",
-        default="bert-base-multilingual-cased",
+        default="klue/roberta-base",
         type=str,
         help="",
     )
@@ -1318,31 +1465,31 @@ if __name__ == "__main__":
         )
         with timer("bulk query by exhaustive search"):
             df = retriever.retrieve(full_ds, topk=args.topk)
-            df["correct"] = df["original_context"] == df["context"]
+            df['correct'] = False
+            df['correct_index'] = None
+            if not isinstance(df.loc[0,'context'], list):
+                df['context'] = df['context'].map(lambda x:eval(x))
+            max_index = 0.0
+            for i, row in df.iterrows():
+                context = row['context']
+                label = row['original_context']
+                for j, c in enumerate(context):
+                    if label in c:
+                        df.loc[i,'correct'] = True
+                        df.loc[i,'correct_index'] = float(j)
+                        if float(j) > max_index:
+                            max_index = float(j)
+                        break
+            print(f'max_index : {int(max_index)}')
+            # df["correct"] = df["original_context"] == df["context"]
             print(
                 "correct retrieval result by exhaustive search",
                 df["correct"].sum() / len(df),
             )
-
-        with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query, topk=args.topk)
-
-    elif args.method == "lsi":
-        retriever = LatentSemanticIndexingRetriever(
-            tokenize_fn=tokenizer.tokenize,
-            data_path=args.data_path,
-            context_path=args.context_path,
-        )
-        with timer("bulk query by exhaustive search"):
-            df = retriever.retrieve(full_ds, topk=args.topk)
-            df["correct"] = df["original_context"] == df["context"]
             print(
-                "correct retrieval result by exhaustive search",
-                df["correct"].sum() / len(df),
+                'mean of correct_index',
+                df['correct_index'].mean()
             )
-
-        with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query, topk=args.topk)
 
     elif args.method == "dpr":
         retriever = BaseDenseRetriever(
@@ -1354,6 +1501,23 @@ if __name__ == "__main__":
         )
         with timer("bulk query by exhaustive search"):
             df = retriever.retrieve(full_ds, topk=1)
+            df["correct"] = df["original_context"] == df["context"]
+            print(
+                "correct retrieval result by exhaustive search",
+                df["correct"].sum() / len(df),
+            )
+
+        with timer("single query by exhaustive search"):
+            scores, indices = retriever.retrieve(query, topk=args.topk)
+
+    elif args.method == 'bm25':
+        retriever = BM25SparseRetrieval(
+            tokenize_fn=tokenizer.tokenize,
+            data_path=args.data_path,
+            context_path=args.context_path,
+        )
+        with timer("bulk query by exhaustive search"):
+            df = retriever.retrieve(full_ds, topk=args.topk)
             df["correct"] = df["original_context"] == df["context"]
             print(
                 "correct retrieval result by exhaustive search",

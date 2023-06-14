@@ -262,7 +262,7 @@ def run_mrc(
 
         #     return EvalPrediction(
         #         predictions=formatted_predictions, label_ids=references
-        #     )
+        #     ), start_prediction_pos, context
 
     metric = evaluate.load("squad")
 
