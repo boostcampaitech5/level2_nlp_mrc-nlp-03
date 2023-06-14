@@ -10,6 +10,7 @@ from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
     AutoTokenizer,
+    BertTokenizerFast,
     DataCollatorWithPadding,
     EvalPrediction,
     HfArgumentParser,
@@ -23,7 +24,7 @@ import hydra
 from omegaconf import DictConfig
 from datetime import datetime, timedelta, timezone
 import wandb
-from utils_viewer import df2html
+from utils_viewer import eval_df2html
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +284,7 @@ def run_mrc(
     # Post-processing:
     def post_processing_function(examples, features, predictions, training_args):
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
-        predictions, start_prediction_pos, context = postprocess_qa_predictions(
+        predictions, start_prediction_pos, context, question = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
@@ -294,17 +295,18 @@ def run_mrc(
         formatted_predictions = [
             {"id": k, "prediction_text": v} for k, v in predictions.items()
         ]
-        if training_args.do_predict:
-            return formatted_predictions
+        start_prediction_pos = [
+            {"id": k, "prediction_start": v} for k, v in start_prediction_pos.items()
+        ]
 
-        elif training_args.do_eval:
-            references = [
-                {"id": ex["id"], "answers": ex[answer_column_name]}
-                for ex in datasets["validation"]
-            ]
-            return EvalPrediction(
-                predictions=formatted_predictions, label_ids=references
-            ), start_prediction_pos, context
+        references = [
+            {"id": ex["id"], "answers": ex[answer_column_name]}
+            for ex in datasets["validation"]
+        ]
+
+        return EvalPrediction(
+            predictions=formatted_predictions, label_ids=references
+        ), start_prediction_pos, context, question
 
     metric = evaluate.load("squad")
 
@@ -366,7 +368,7 @@ def run_mrc(
 
         csv_path=os.path.join(training_args.output_dir, "eval_results.csv")
         eval_preds.to_csv(csv_path, index=False)
-        df2html(csv_path)
+        eval_df2html(csv_path)
 
 if __name__ == "__main__":
     main()

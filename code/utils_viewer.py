@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 
 # HTML 템플릿
-TEMPLATE = """
+EVAL_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -16,16 +16,37 @@ TEMPLATE = """
 </html>
 """
 
+PRED_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>prediction results</title>
+</head>
+<body>
+    $paragraphs
+</body>
+</html>
+"""
+
 # 문단 템플릿
-PARAGRAPH_TEMPLATE = """
+EVAL_PARAGRAPH_TEMPLATE = """
     <h1>$id</h1>
     <h2>exact match : $is_match</h2>
+    <h2>question : $question</h2>
     <p>
         $paragraph
     </p>
 """
 
-def fill_color_text(context, pred_start, pred_text, answer_start, answer_text):
+PRED_PARAGRAPH_TEMPLATE = """
+    <h1>$id</h1>
+    <h2>question : $question</h2>
+    <p>
+        $paragraph
+    </p>
+"""
+
+def eval_fill_color_text(context, pred_start, pred_text, answer_start, answer_text):
     pred_end=pred_start+len(pred_text)
     answer_end=answer_start+len(answer_text)
     if pred_start<answer_end<pred_end:
@@ -48,8 +69,18 @@ def fill_color_text(context, pred_start, pred_text, answer_start, answer_text):
 
     return context
 
+def pred_fill_color_text(context, pred_start, pred_text):
+    pred_end=pred_start+len(pred_text)
 
-def df2paragraph(df:pd.DataFrame, paragraph_template):
+    span_start='<span style="color: blue;">'
+    span_end='</span>'
+
+    context=context[:pred_start] + span_start + context[pred_start:pred_end] + span_end + context[pred_end:]
+
+    return context
+
+
+def eval_df2paragraph(df:pd.DataFrame, paragraph_template):
     # 문단을 생성하여 저장할 문자열 초기화
     paragraphs_html = ""
 
@@ -57,8 +88,9 @@ def df2paragraph(df:pd.DataFrame, paragraph_template):
     for i, data in df.iterrows():
         dict_data={}
         dict_data['id']=data['id']
+        dict_data['question']=data['question']
         dict_data['is_match']= (data['prediction_start']==data['answer_start']) and (data['prediction_text']==data['answer_text'])
-        dict_data['paragraph']=fill_color_text(
+        dict_data['paragraph']=eval_fill_color_text(
             data['context'],
             data['prediction_start'],
             data['prediction_text'],
@@ -70,17 +102,46 @@ def df2paragraph(df:pd.DataFrame, paragraph_template):
 
     return paragraphs_html
 
+def pred_df2paragraph(df:pd.DataFrame, paragraph_template):
+    # 문단을 생성하여 저장할 문자열 초기화
+    paragraphs_html = ""
 
-def df2html(path: str = "./outputs/train_dataset/eval_results.csv"):
+    # 각 문단 데이터를 기반으로 문단 생성
+    for i, data in df.iterrows():
+        dict_data={}
+        dict_data['id']=data['id']
+        dict_data['question']=data['question']
+        dict_data['paragraph']=pred_fill_color_text(
+            data['context'],
+            data['prediction_start'],
+            data['prediction_text'],
+        )
+        paragraph_html = string.Template(paragraph_template).substitute(dict_data)
+        paragraphs_html += paragraph_html
+
+    return paragraphs_html
+
+
+def eval_df2html(path: str = "./outputs/train_dataset/eval_results.csv"):
     path=Path(path)
     df = pd.read_csv(path)
     # 최종 HTML 생성
-    final_html = string.Template(TEMPLATE).substitute(paragraphs=df2paragraph(df,PARAGRAPH_TEMPLATE))
+    final_html = string.Template(EVAL_TEMPLATE).substitute(paragraphs=eval_df2paragraph(df,EVAL_PARAGRAPH_TEMPLATE))
 
     # HTML 파일로 저장
     with open(os.path.join(path.parent,"evaluation_results.html"), "w") as file:
         file.write(final_html)
 
+def pred_df2html(path: str = "./outputs/test_dataset/pred_results.csv"):
+    path=Path(path)
+    df = pd.read_csv(path)
+    # 최종 HTML 생성
+    final_html = string.Template(PRED_TEMPLATE).substitute(paragraphs=pred_df2paragraph(df,PRED_PARAGRAPH_TEMPLATE))
+
+    # HTML 파일로 저장
+    with open(os.path.join(path.parent,"prediction_results.html"), "w") as file:
+        file.write(final_html)
+
 if __name__=="__main__":
-    CSV_PATH=Path("./outputs/train_dataset/eval_results.csv")
-    df2html(CSV_PATH)
+    eval_df2html()
+    pred_df2html()

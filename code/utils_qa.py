@@ -313,7 +313,7 @@ def postprocess_qa_predictions(
                     json.dumps(scores_diff_json, indent=4, ensure_ascii=False) + "\n"
                 )
 
-    return all_predictions, prediction_start_pos, list(examples['context'])
+    return all_predictions, prediction_start_pos, examples['context'], examples['question']
 
 
 def check_no_error(
