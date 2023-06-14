@@ -4,10 +4,10 @@ import pickle
 import time
 import torch
 from torch.utils.data import DataLoader
-from retriever.DPR_model import (
+from DPR_model import (
     DPR,
 )  # 이 파일을 실행할 때는 retriever.을 떼줘야 실행이 됩니다. inference.py에서 불러오기 위해 붙여놨습니다.
-from retriever.DPR_dataset import (
+from DPR_dataset import (
     PassageDataset,
 )  # 이 파일을 이곳 저곳에서 불러서 쓰다 보니까 경로가 꼬여서 import가 잘 안 됩니다... 곧 고치도록 하겠습니다.
 from contextlib import contextmanager
@@ -196,14 +196,15 @@ class TfidfRetriever(_BaseSparseRetriever):
         assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
 
         if isinstance(query_or_dataset, str):
-            doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
+            doc_scores, doc_indices, all_score = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
 
             for i in range(topk):
                 print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
                 print(self.contexts[doc_indices[i]])
+                print(doc_indices)
 
-            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
+            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)], all_score)
 
         elif isinstance(query_or_dataset, Dataset):
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
@@ -257,7 +258,8 @@ class TfidfRetriever(_BaseSparseRetriever):
         sorted_result = np.argsort(result.squeeze())[::-1]
         doc_score = result.squeeze()[sorted_result].tolist()[:k]
         doc_indices = sorted_result.tolist()[:k]
-        return doc_score, doc_indices
+        all_score = result.squeeze().tolist()
+        return doc_score, doc_indices, all_score
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -1251,7 +1253,7 @@ def get_args():
         type=str,
         help="path of wikipedia passages",
     )
-    parser.add_argument("--method", default="dpr", type=str, help="")
+    parser.add_argument("--method", default="tfidf", type=str, help="")
     parser.add_argument("--topk", default=10, type=int, help="")
     parser.add_argument(
         "--retriever_output_path",
@@ -1290,8 +1292,9 @@ if __name__ == "__main__":
     # )
     # retriever.get_sparse_embedding()
 
-    query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
-
+    query = full_ds[2269]['question']
+    answer = [10203]
+    
     if args.method == "faiss":
         retriever = FaissRetriever(
             tokenize_fn=tokenizer.tokenize,
@@ -1325,7 +1328,12 @@ if __name__ == "__main__":
             )
 
         with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query, topk=args.topk)
+            scores, indices, all_score = retriever.retrieve(query, topk=args.topk)
+            all_score = [all_score]
+            y_true = np.array(answer)
+            y_score = np.array(all_score)
+            score = top_k_accuracy_score(y_true,y_score,k=10,labels=[i for i in range(56737)])
+            print("accuaracy: ",score*100,"%")
 
     elif args.method == "lsi":
         retriever = LatentSemanticIndexingRetriever(
