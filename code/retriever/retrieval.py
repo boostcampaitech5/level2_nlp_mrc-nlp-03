@@ -1157,10 +1157,18 @@ class BaseDenseRetriever:
             result = result.detach().cpu().numpy()
 
         sorted_result = np.argsort(result.squeeze())[::-1]
-        doc_score = result.squeeze()[sorted_result].tolist()[:k]
-        doc_indices = sorted_result.tolist()[:k]
-        doc_ids = self.p_embedding["document_id"][doc_indices]
-        return doc_score, doc_ids
+        top_k_indeces = []
+        doc_ids = []
+        index = 0
+        # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
+        while len(top_k_indeces) < k:
+            doc_id = self.p_embedding["document_id"][sorted_result[index]]
+            if doc_id not in doc_ids:
+                top_k_indeces.append(sorted_result[index])
+                doc_ids.append(doc_id)
+            index += 1
+        doc_scores = result.squeeze()[top_k_indeces].tolist()
+        return doc_scores, doc_ids
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -1200,14 +1208,24 @@ class BaseDenseRetriever:
         if not isinstance(result, np.ndarray):
             result = result.detach().cpu().numpy()
 
-        doc_scores = []
-        doc_ids = []
+        bulk_doc_scores = []
+        bulk_doc_ids = []
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
-            doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices = sorted_result.tolist()[:k]
-            doc_ids.append(self.p_embedding["document_id"][doc_indices])
-        return doc_scores, doc_ids
+            top_k_indeces = []
+            doc_ids = []
+            index = 0
+            # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
+            while len(top_k_indeces) < k:
+                doc_id = self.p_embedding["document_id"][sorted_result[index]]
+                if doc_id not in doc_ids:
+                    top_k_indeces.append(sorted_result[index])
+                    doc_ids.append(doc_id)
+                index += 1
+            doc_scores = result.squeeze()[top_k_indeces].tolist()
+            bulk_doc_scores.append(doc_scores)
+            bulk_doc_ids.append(doc_ids)
+        return bulk_doc_scores, bulk_doc_ids
 
 
 def get_args():
