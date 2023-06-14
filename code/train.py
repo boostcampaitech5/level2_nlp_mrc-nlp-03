@@ -4,6 +4,7 @@ import sys
 
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
+from models import ReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -23,7 +24,11 @@ import hydra
 from omegaconf import DictConfig
 from datetime import datetime, timedelta, timezone
 import wandb
-
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+os.environ['TOKENIZERS_PARALLELISM'] = "false"
+os.environ['WANDB_SILENT']="true"
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = "true"
 logger = logging.getLogger(__name__)
 
 @hydra.main(version_base="1.3",config_path="../configs",config_name="train")
@@ -31,17 +36,17 @@ def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
-    # ~/.bashrc에 다음과 같이 설정
-    # export WANDB_ENTITY=ggul_tiger
-    # export WANDB_PROJECT=MRC
-    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
-    cfg['trainer']['run_name']=run_name
-    wandb.init(config=cfg,id=run_name)
-
     # Argument 정의된 dataclass들을 instantiate
     model_args=ModelArguments(**cfg.get("model"))
     data_args=DataTrainingArguments(**cfg.get("data"))
     training_args=TrainingArguments(**cfg.get("trainer"))
+
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H-%M-%S')
+    training_args.run_name=run_name
+    training_args.output_dir = os.path.join(training_args.output_dir, run_name)
+    wandb.init(project='MRC',
+               entity=None,
+               name=run_name)
 
     print(model_args.model_name_or_path)
     print(f"model is from {model_args.model_name_or_path}")
@@ -55,7 +60,7 @@ def main(cfg: DictConfig):
     )
 
     # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
-    logger.info("Training/evaluation parameters %s", training_args)
+    # logger.info("Training/evaluation parameters %s", training_args)
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
@@ -76,9 +81,8 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
 
@@ -330,7 +334,7 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        train_result = trainer.train()
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
