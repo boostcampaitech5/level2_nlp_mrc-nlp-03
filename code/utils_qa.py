@@ -322,7 +322,9 @@ def postprocess_qa_predictions(
                 writer.write(
                     json.dumps(scores_diff_json, indent=4, ensure_ascii=False) + "\n"
                 )
-    all_predictions = {key:value["pred"] for key, value in all_predictions.items()}
+
+    if isinstance(list(all_predictions.values())[0], dict):
+        all_predictions = {key:value["pred"] for key, value in all_predictions.items()}
     return all_predictions, prediction_start_pos, list(examples['context'])
 
 

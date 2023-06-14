@@ -47,28 +47,28 @@ class QuestionAnsweringTrainer(Trainer):
         compute_metrics = self.compute_metrics
         self.compute_metrics = None
         try:
-            output = self.prediction_loop(
-                eval_dataloader,
-                description="Evaluation",
-                # metric이 없으면 예측값을 모으는 이유가 없으므로 아래의 코드를 따르게 됩니다.
-                # self.args.prediction_loss_only
-                prediction_loss_only=True if compute_metrics is None else None,
-                ignore_keys=ignore_keys,
-            )
-            # model = self.model
-            # model.eval()
-            # start_logits, end_logits = [], []
-            # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            # for i, samples in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc='evaluate'):
-            #     input_ids = samples['input_ids'].to(device)
-            #     attention_mask = samples['attention_mask'].to(device)
-            #     output = model(input_ids=input_ids, attention_mask=attention_mask)
-            #     start_logits.append(output['start_logits'].detach().cpu())
-            #     end_logits.append(output['end_logits'].detach().cpu())
-            #     torch.cuda.empty_cache()
-            # start_logits = torch.concat(start_logits)
-            # end_logits = torch.concat(end_logits)
-            # output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
+            # output = self.prediction_loop(
+            #     eval_dataloader,
+            #     description="Evaluation",
+            #     # metric이 없으면 예측값을 모으는 이유가 없으므로 아래의 코드를 따르게 됩니다.
+            #     # self.args.prediction_loss_only
+            #     prediction_loss_only=True if compute_metrics is None else None,
+            #     ignore_keys=ignore_keys,
+            # )
+            model = self.model
+            model.eval()
+            start_logits, end_logits = [], []
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            for i, samples in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc='evaluate'):
+                input_ids = samples['input_ids'].to(device)
+                attention_mask = samples['attention_mask'].to(device)
+                output = model(input_ids=input_ids, attention_mask=attention_mask)
+                start_logits.append(output['start_logits'].detach().cpu())
+                end_logits.append(output['end_logits'].detach().cpu())
+                torch.cuda.empty_cache()
+            start_logits = torch.concat(start_logits)
+            end_logits = torch.concat(end_logits)
+            output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
         finally:
             self.compute_metrics = compute_metrics
 
@@ -80,7 +80,7 @@ class QuestionAnsweringTrainer(Trainer):
 
         if self.post_process_function is not None and self.compute_metrics is not None:
             eval_preds, prediction_start_pos, context = self.post_process_function(
-                eval_examples, eval_dataset, output.predictions, self.args
+                eval_examples, eval_dataset, output['predictions'], self.args
             )
             metrics = self.compute_metrics(eval_preds)
 
@@ -119,28 +119,28 @@ class QuestionAnsweringTrainer(Trainer):
         compute_metrics = self.compute_metrics
         self.compute_metrics = None
         try:
-            output = self.prediction_loop(
-                test_dataloader,
-                description="Evaluation",
-                # metric이 없으면 예측값을 모으는 이유가 없으므로 아래의 코드를 따르게 됩니다.
-                # self.args.prediction_loss_only
-                prediction_loss_only=True if compute_metrics is None else None,
-                ignore_keys=ignore_keys,
-            )
-            # model = self.model
-            # model.eval()
-            # start_logits, end_logits = [], []
-            # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            # for i, samples in tqdm(enumerate(test_dataloader), total=len(test_dataloader), desc='evaluate'):
-            #     input_ids = samples['input_ids'].to(device)
-            #     attention_mask = samples['attention_mask'].to(device)
-            #     output = model(input_ids=input_ids, attention_mask=attention_mask)
-            #     start_logits.append(output['start_logits'].detach().cpu())
-            #     end_logits.append(output['end_logits'].detach().cpu())
-            #     torch.cuda.empty_cache()
-            # start_logits = torch.concat(start_logits)
-            # end_logits = torch.concat(end_logits)
-            # output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
+            # output = self.prediction_loop(
+            #     test_dataloader,
+            #     description="Evaluation",
+            #     # metric이 없으면 예측값을 모으는 이유가 없으므로 아래의 코드를 따르게 됩니다.
+            #     # self.args.prediction_loss_only
+            #     prediction_loss_only=True if compute_metrics is None else None,
+            #     ignore_keys=ignore_keys,
+            # )
+            model = self.model
+            model.eval()
+            start_logits, end_logits = [], []
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            for i, samples in tqdm(enumerate(test_dataloader), total=len(test_dataloader), desc='predict'):
+                input_ids = samples['input_ids'].to(device)
+                attention_mask = samples['attention_mask'].to(device)
+                output = model(input_ids=input_ids, attention_mask=attention_mask)
+                start_logits.append(output['start_logits'].detach().cpu())
+                end_logits.append(output['end_logits'].detach().cpu())
+                torch.cuda.empty_cache()
+            start_logits = torch.concat(start_logits)
+            end_logits = torch.concat(end_logits)
+            output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
         finally:
             self.compute_metrics = compute_metrics
 
@@ -153,7 +153,7 @@ class QuestionAnsweringTrainer(Trainer):
                 columns=list(test_dataset.features.keys()),
             )
 
-        predictions = self.post_process_function(
-            test_examples, test_dataset, output.predictions, self.args
+        predictions, prediction_start_pos, context = self.post_process_function(
+            test_examples, test_dataset, output['predictions'], self.args
         )
         return predictions

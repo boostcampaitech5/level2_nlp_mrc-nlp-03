@@ -8,16 +8,19 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import logging
 import sys, os
 from typing import Callable, Dict, List, Tuple
-
+sys.path.append('code/retriever')
 import numpy as np
+from models import ReadModel
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_from_disk
+from datetime import datetime, timedelta, timezone
 import evaluate
 from retriever.retrieval import TfidfRetriever, FaissRetriever, BaseDenseRetriever
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
+    BertTokenizerFast,
     AutoTokenizer,
     DataCollatorWithPadding,
     EvalPrediction,
@@ -46,6 +49,9 @@ def main(cfg: DictConfig):
     model_args = ModelArguments(**cfg.get("model"))
     data_args = DataTrainingArguments(**cfg.get("data"))
     training_args = TrainingArguments(**cfg.get("trainer"))
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
+    training_args.output_dir = os.path.join(training_args.output_dir, run_name)
+    
 
     # training_args.do_train = True
 
@@ -60,7 +66,7 @@ def main(cfg: DictConfig):
     )
 
     # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
-    logger.info("Training/evaluation parameters %s", training_args)
+    # logger.info("Training/evaluation parameters %s", training_args)
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
@@ -75,15 +81,15 @@ def main(cfg: DictConfig):
         if model_args.config_name
         else model_args.model_name_or_path,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = BertTokenizerFast.from_pretrained(
         model_args.tokenizer_name
         if model_args.tokenizer_name
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        # from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
 
@@ -117,6 +123,7 @@ def run_retrieval(
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+    df['context'] = df['context'].map(lambda x: ' '.join(x))
 
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
@@ -187,7 +194,7 @@ def run_mrc(
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             return_token_type_ids=False
-            if model.base_model_prefix == "roberta"
+            if model.config.model_type == "roberta"
             else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )

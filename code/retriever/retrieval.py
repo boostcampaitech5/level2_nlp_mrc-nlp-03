@@ -1336,9 +1336,9 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
-                    "context": " ".join(
+                    "context":
                         [self.contexts[pid] for pid in doc_indices[idx]]
-                    ),
+                    ,
                 }
                 if "context" in example.keys() and "answers" in example.keys():
                     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
@@ -1398,7 +1398,7 @@ def get_args():
         type=str,
         help="path of wikipedia passages",
     )
-    parser.add_argument("--method", default="dpr", type=str, help="")
+    parser.add_argument("--method", default="bm25", type=str, help="faiss, tfidf, bm25, dpr")
     parser.add_argument("--topk", default=10, type=int, help="")
     parser.add_argument(
         "--retriever_output_path",
@@ -1467,9 +1467,6 @@ if __name__ == "__main__":
             df = retriever.retrieve(full_ds, topk=args.topk)
             df['correct'] = False
             df['correct_index'] = None
-            if not isinstance(df.loc[0,'context'], list):
-                df['context'] = df['context'].map(lambda x:eval(x))
-            max_index = 0.0
             for i, row in df.iterrows():
                 context = row['context']
                 label = row['original_context']
@@ -1477,10 +1474,7 @@ if __name__ == "__main__":
                     if label in c:
                         df.loc[i,'correct'] = True
                         df.loc[i,'correct_index'] = float(j)
-                        if float(j) > max_index:
-                            max_index = float(j)
                         break
-            print(f'max_index : {int(max_index)}')
             # df["correct"] = df["original_context"] == df["context"]
             print(
                 "correct retrieval result by exhaustive search",
@@ -1490,6 +1484,8 @@ if __name__ == "__main__":
                 'mean of correct_index',
                 df['correct_index'].mean()
             )
+        # with timer("single query by exhaustive search"):
+        #     scores, indices = retriever.retrieve(query, topk=args.topk)
 
     elif args.method == "dpr":
         retriever = BaseDenseRetriever(
@@ -1507,8 +1503,8 @@ if __name__ == "__main__":
                 df["correct"].sum() / len(df),
             )
 
-        with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query, topk=args.topk)
+        # with timer("single query by exhaustive search"):
+        #     scores, indices = retriever.retrieve(query, topk=args.topk)
 
     elif args.method == 'bm25':
         retriever = BM25SparseRetrieval(
@@ -1518,11 +1514,24 @@ if __name__ == "__main__":
         )
         with timer("bulk query by exhaustive search"):
             df = retriever.retrieve(full_ds, topk=args.topk)
-            df["correct"] = df["original_context"] == df["context"]
+            df['correct'] = False
+            df['correct_index'] = None
+            for i, row in df.iterrows():
+                context = row['context']
+                label = row['original_context']
+                for j, c in enumerate(context):
+                    if label in c:
+                        df.loc[i,'correct'] = True
+                        df.loc[i,'correct_index'] = float(j)
+                        break
+            # df["correct"] = df["original_context"] == df["context"]
             print(
                 "correct retrieval result by exhaustive search",
                 df["correct"].sum() / len(df),
             )
-
-        with timer("single query by exhaustive search"):
-            scores, indices = retriever.retrieve(query, topk=args.topk)
+            print(
+                'mean of correct_index',
+                df['correct_index'].mean()
+            )
+        # with timer("single query by exhaustive search"):
+        #     scores, indices = retriever.retrieve(query, topk=args.topk)
