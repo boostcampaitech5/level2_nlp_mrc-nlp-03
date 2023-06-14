@@ -1,0 +1,5 @@
+_target_: retriever.retrieval.BaseDenseRetriever
+data_path: ./data/
+retriever_path: ./retriever_outputs/klue-bert-base
+passage_path: wikipedia_passages.json
+context_path: wikipedia_documents.json

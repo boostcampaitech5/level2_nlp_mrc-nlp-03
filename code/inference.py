@@ -11,16 +11,9 @@ from typing import Callable, Dict, List, Tuple
 
 import numpy as np
 from arguments import DataTrainingArguments, ModelArguments
-from datasets import (
-    Dataset,
-    DatasetDict,
-    Features,
-    Sequence,
-    Value,
-    load_from_disk
-)
+from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_from_disk
 import evaluate
-from retrieval import TfidfRetriever, FaissRetriever
+from retriever.retrieval import TfidfRetriever, FaissRetriever, BaseDenseRetriever
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -38,7 +31,8 @@ from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base="1.3",config_path="../configs",config_name="inference")
+
+@hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
 def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
@@ -49,9 +43,9 @@ def main(cfg: DictConfig):
     # model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # Argument 정의된 dataclass들을 instanciate
-    model_args=ModelArguments(**cfg.get("model"))
-    data_args=DataTrainingArguments(**cfg.get("data"))
-    training_args=TrainingArguments(**cfg.get("trainer"))
+    model_args = ModelArguments(**cfg.get("model"))
+    data_args = DataTrainingArguments(**cfg.get("data"))
+    training_args = TrainingArguments(**cfg.get("trainer"))
 
     # training_args.do_train = True
 
@@ -95,7 +89,7 @@ def main(cfg: DictConfig):
 
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
-        datasets = run_sparse_retrieval(
+        datasets = run_retrieval(
             tokenizer.tokenize,
             datasets,
             cfg,
@@ -108,7 +102,7 @@ def main(cfg: DictConfig):
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
 
-def run_sparse_retrieval(
+def run_retrieval(
     tokenize_fn: Callable[[str], List[str]],
     datasets: DatasetDict,
     cfg: DictConfig,
@@ -119,10 +113,7 @@ def run_sparse_retrieval(
 ) -> DatasetDict:
     # configs/retriever 에 yaml로 정의된 retriever를 instantiate
     # 바꾸고싶으면 configs/inference.yaml 의 retriever 키의 value를 바꾸면 됨.
-    retriever = hydra.utils.instantiate(
-        cfg.retriever,
-        tokenize_fn=tokenize_fn
-    )
+    retriever = hydra.utils.instantiate(cfg.retriever, tokenize_fn=tokenize_fn)
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
@@ -166,13 +157,12 @@ def run_mrc(
     tokenizer,
     model,
 ) -> None:
-
     # eval 혹은 prediction에서만 사용함
     column_names = datasets["validation"].column_names
 
     question_column_name = "question" if "question" in column_names else column_names[0]
     context_column_name = "context" if "context" in column_names else column_names[1]
-    answer_column_name = "answers" if "answers" in column_names else column_names[2]
+    # answer_column_name = "answers" if "answers" in column_names else column_names[2]
 
     # Padding에 대한 옵션을 설정합니다.
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
@@ -196,7 +186,9 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False if model.base_model_prefix=='roberta' else True,
+            return_token_type_ids=False
+            if model.base_model_prefix == "roberta"
+            else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -262,15 +254,15 @@ def run_mrc(
 
         if training_args.do_predict:
             return formatted_predictions
-        elif training_args.do_eval:
-            references = [
-                {"id": ex["id"], "answers": ex[answer_column_name]}
-                for ex in datasets["validation"]
-            ]
+        # elif training_args.do_eval:
+        #     references = [
+        #         {"id": ex["id"], "answers": ex[answer_column_name]}
+        #         for ex in datasets["validation"]
+        #     ]
 
-            return EvalPrediction(
-                predictions=formatted_predictions, label_ids=references
-            ), start_prediction_pos, context
+        #     return EvalPrediction(
+        #         predictions=formatted_predictions, label_ids=references
+        #     )
 
     metric = evaluate.load("squad")
 
@@ -311,7 +303,10 @@ def run_mrc(
         trainer.log_metrics("test", metrics)
         trainer.save_metrics("test", metrics)
 
-        eval_preds.to_csv(os.path.join(training_args.output_dir, "eval_results.csv"), index=False)
+        eval_preds.to_csv(
+            os.path.join(training_args.output_dir, "eval_results.csv"), index=False
+        )
+
 
 if __name__ == "__main__":
     main()

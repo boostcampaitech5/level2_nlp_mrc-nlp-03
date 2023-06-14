@@ -2,17 +2,26 @@ import json
 import os
 import pickle
 import time
-from contextlib import contextmanager
-from abc import abstractmethod
-from typing import List, Optional, Tuple, Union
-
+import torch
 import faiss
 import numpy as np
 import pandas as pd
+from torch.utils.data import DataLoader
+from contextlib import contextmanager
+from abc import abstractmethod
+from typing import List, Optional, Tuple, Union
+from transformers import AutoTokenizer
 from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from tqdm.auto import tqdm
+
+try:
+    from retriever.DPR_model import DPR
+    from retriever.DPR_dataset import PassageDataset
+except ImportError:
+    from DPR_model import DPR
+    from DPR_dataset import PassageDataset
 
 
 @contextmanager
@@ -22,9 +31,9 @@ def timer(name):
     Args:
         name (str): _description_
     """
-    t0 = time.time()                                    # with문이 시작되기 전에 실행
-    yield                                               # with문 내부 코드 실행
-    print(f"[{name}] done in {time.time() - t0:.3f} s") #with문 끝난 뒤에 실행
+    t0 = time.time()  # with문이 시작되기 전에 실행
+    yield  # with문 내부 코드 실행
+    print(f"[{name}] done in {time.time() - t0:.3f} s")  # with문 끝난 뒤에 실행
 
 
 class _BaseSparseRetriever:
@@ -34,7 +43,6 @@ class _BaseSparseRetriever:
         data_path: Optional[str] = "./data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
-
         """
         Arguments:
             tokenize_fn:
@@ -68,7 +76,9 @@ class _BaseSparseRetriever:
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
-            tokenizer=tokenize_fn, ngram_range=(1, 2), max_features=50000,
+            tokenizer=tokenize_fn,
+            ngram_range=(1, 2),
+            max_features=50000,
         )
 
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
@@ -77,7 +87,6 @@ class _BaseSparseRetriever:
         self.get_sparse_embedding()
 
     def get_sparse_embedding(self) -> None:
-
         """
         Summary:
             Passage Embedding을 만들고
@@ -135,7 +144,6 @@ class TfidfRetriever(_BaseSparseRetriever):
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
-
         """
         Arguments:
             tokenize_fn:
@@ -165,7 +173,6 @@ class TfidfRetriever(_BaseSparseRetriever):
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
-
         """
         Arguments:
             query_or_dataset (Union[str, Dataset]):
@@ -199,7 +206,6 @@ class TfidfRetriever(_BaseSparseRetriever):
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
@@ -227,7 +233,6 @@ class TfidfRetriever(_BaseSparseRetriever):
             return pd.DataFrame(total)
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
-
         """
         Arguments:
             query (str):
@@ -245,7 +250,7 @@ class TfidfRetriever(_BaseSparseRetriever):
         ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
         with timer("query ex search"):
-            result = np.dot(query_vec,self.p_embedding.T)
+            result = np.dot(query_vec, self.p_embedding.T)
         if not isinstance(result, np.ndarray):
             result = result.toarray()
 
@@ -257,7 +262,6 @@ class TfidfRetriever(_BaseSparseRetriever):
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
         """
         Arguments:
             queries (List):
@@ -287,18 +291,17 @@ class TfidfRetriever(_BaseSparseRetriever):
 
 class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
     def __init__(
-            self,
-            tokenize_fn,
-            num_components:int=10,
-            data_path: Optional[str] = "../data/",
-            context_path: Optional[str] = "wikipedia_documents.json"
-        ) -> None:
-        self.num_components=num_components
-        self.lsi=TruncatedSVD(n_components=self.num_components, n_iter=100)
+        self,
+        tokenize_fn,
+        num_components: int = 10,
+        data_path: Optional[str] = "../data/",
+        context_path: Optional[str] = "wikipedia_documents.json",
+    ) -> None:
+        self.num_components = num_components
+        self.lsi = TruncatedSVD(n_components=self.num_components, n_iter=100)
         super().__init__(tokenize_fn, data_path, context_path)
 
     def get_sparse_embedding(self) -> None:
-
         """
         Summary:
             Passage Embedding을 만들고
@@ -314,11 +317,15 @@ class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
         tfidfv_path = os.path.join(self.data_path, tfidfv_name)
         lsi_path = os.path.join(self.data_path, lsi_name)
 
-        if os.path.isfile(emd_path) and os.path.isfile(tfidfv_path) and os.path.isfile(lsi_path):
+        if (
+            os.path.isfile(emd_path)
+            and os.path.isfile(tfidfv_path)
+            and os.path.isfile(lsi_path)
+        ):
             with open(emd_path, "rb") as file:
                 self.p_embedding = pickle.load(file)
             with open(tfidfv_path, "rb") as file:
-                self.tfidfv:TfidfVectorizer = pickle.load(file)
+                self.tfidfv: TfidfVectorizer = pickle.load(file)
             print("Embedding pickle load.")
             print("passage embedding shape : {}".format(self.p_embedding.shape))
         else:
@@ -334,8 +341,9 @@ class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
                 pickle.dump(self.lsi, file)
             print("Embedding pickle saved.")
 
-
-    def retrieve(self, query_or_dataset: Union[str,Dataset], topk: Optional[int] = 1) -> Union[Tuple[List, List], pd.DataFrame]:
+    def retrieve(
+        self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
+    ) -> Union[Tuple[List, List], pd.DataFrame]:
         """
         Arguments:
             query_or_dataset (Union[str, Dataset]):
@@ -369,7 +377,6 @@ class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
@@ -396,7 +403,7 @@ class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
 
             return pd.DataFrame(total)
 
-    def get_relevant_doc(self, query: str, k: Optional[int]=1) -> Tuple[List, List]:
+    def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
         """
         Arguments:
             query (str):
@@ -423,8 +430,10 @@ class LatentSemanticIndexingRetriever(_BaseSparseRetriever):
         doc_score = result.squeeze()[sorted_result].tolist()[:k]
         doc_indices = sorted_result.tolist()[:k]
         return doc_score, doc_indices
-    
-    def get_relevant_doc_bulk(self, queries: List, k: Optional[int]=1) -> Tuple[List, List]:
+
+    def get_relevant_doc_bulk(
+        self, queries: List, k: Optional[int] = 1
+    ) -> Tuple[List, List]:
         """
         Arguments:
             queries (List):
@@ -475,7 +484,6 @@ class FaissRetriever(_BaseSparseRetriever):
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
-
         """
         Arguments:
             tokenize_fn:
@@ -505,7 +513,6 @@ class FaissRetriever(_BaseSparseRetriever):
         self.build_faiss(num_clusters=num_clusters)
 
     def build_faiss(self, num_clusters=64) -> None:
-
         """
         Summary:
             속성으로 저장되어 있는 Passage Embedding을
@@ -544,7 +551,6 @@ class FaissRetriever(_BaseSparseRetriever):
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
-
         """
         Arguments:
             query_or_dataset (Union[str, Dataset]):
@@ -579,7 +585,6 @@ class FaissRetriever(_BaseSparseRetriever):
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
 
@@ -607,10 +612,7 @@ class FaissRetriever(_BaseSparseRetriever):
 
             return pd.DataFrame(total)
 
-    def get_relevant_doc(
-        self, query: str, k: Optional[int] = 1
-    ) -> Tuple[List, List]:
-
+    def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
         """
         Arguments:
             query (str):
@@ -635,7 +637,6 @@ class FaissRetriever(_BaseSparseRetriever):
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
         """
         Arguments:
             queries (List):
@@ -664,7 +665,6 @@ class SparseRetrieval:
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
-
         """
         Arguments:
             tokenize_fn:
@@ -698,7 +698,9 @@ class SparseRetrieval:
 
         # Transform by vectorizer
         self.tfidfv = TfidfVectorizer(
-            tokenizer=tokenize_fn, ngram_range=(1, 2), max_features=50000,
+            tokenizer=tokenize_fn,
+            ngram_range=(1, 2),
+            max_features=50000,
         )
 
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
@@ -707,7 +709,6 @@ class SparseRetrieval:
         self.get_sparse_embedding()
 
     def get_sparse_embedding(self) -> None:
-
         """
         Summary:
             Passage Embedding을 만들고
@@ -739,7 +740,6 @@ class SparseRetrieval:
             print("Embedding pickle saved.")
 
     def build_faiss(self, num_clusters=64) -> None:
-
         """
         Summary:
             속성으로 저장되어 있는 Passage Embedding을
@@ -778,7 +778,6 @@ class SparseRetrieval:
     def retrieve(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
-
         """
         Arguments:
             query_or_dataset (Union[str, Dataset]):
@@ -812,7 +811,6 @@ class SparseRetrieval:
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
@@ -841,7 +839,6 @@ class SparseRetrieval:
             return cqas
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
-
         """
         Arguments:
             query (str):
@@ -871,7 +868,6 @@ class SparseRetrieval:
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
         """
         Arguments:
             queries (List):
@@ -901,7 +897,6 @@ class SparseRetrieval:
     def retrieve_faiss(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
     ) -> Union[Tuple[List, List], pd.DataFrame]:
-
         """
         Arguments:
             query_or_dataset (Union[str, Dataset]):
@@ -938,7 +933,6 @@ class SparseRetrieval:
             return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
         elif isinstance(query_or_dataset, Dataset):
-
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             queries = query_or_dataset["question"]
             total = []
@@ -970,7 +964,6 @@ class SparseRetrieval:
     def get_relevant_doc_faiss(
         self, query: str, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
         """
         Arguments:
             query (str):
@@ -995,7 +988,6 @@ class SparseRetrieval:
     def get_relevant_doc_bulk_faiss(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
         """
         Arguments:
             queries (List):
@@ -1017,6 +1009,224 @@ class SparseRetrieval:
         return D.tolist(), I.tolist()
 
 
+class BaseDenseRetriever:
+    def __init__(
+        self,
+        tokenize_fn,
+        retriever_path: str,
+        data_path: Optional[str] = "./data/",
+        passage_path: Optional[str] = "wikipedia_passages.json",
+        context_path: Optional[str] = "wikipedia_documents.json",
+    ) -> None:
+        self.device = "cuda" if torch.cuda.is_available else "cpu"
+        self.data_path = data_path
+        self.passage_path = passage_path
+        self.model = DPR(None, for_train=False, output_dir=retriever_path)
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        with open(os.path.join(retriever_path, "encoder_model_name.txt"), "r") as f:
+            model_name = f.readline()
+        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+            wiki = json.load(f)
+        self.wiki_df = pd.DataFrame(wiki).T
+        self.wiki_df.set_index("document_id", inplace=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        self.p_embedding = None
+        self.get_passage_embedding()
+
+    def get_passage_embedding(self):
+        pickle_name = f"passage_embedding.bin"
+        emd_path = os.path.join(self.data_path, pickle_name)
+
+        if os.path.isfile(emd_path):
+            with open(emd_path, "rb") as file:
+                self.p_embedding = pickle.load(file)
+            print("Embedding pickle load.")
+            print(
+                "passage embedding shape : {}".format(
+                    self.p_embedding["embedding"].shape
+                )
+            )
+        else:
+            passage_dataset = PassageDataset(
+                os.path.join(self.data_path, self.passage_path),
+                tokenizer=self.tokenizer,
+                max_len=384,
+            )
+
+            def collate_fn(batch):
+                keys = batch[0].keys()
+                batched_data = {}
+
+                for key in keys:
+                    batched_data[key] = torch.tensor([sample[key] for sample in batch])
+
+                return batched_data
+
+            dataloader = DataLoader(
+                passage_dataset,
+                batch_size=512,
+                num_workers=4,
+                collate_fn=collate_fn,
+            )
+            embedding = []
+            document_id = []
+            with torch.no_grad():
+                for data in tqdm(
+                    dataloader,
+                    desc="Build passage embedding",
+                    total=len(dataloader),
+                ):
+                    embeddings = self.model.get_passage_embedding(
+                        {
+                            "input_ids": data["input_ids"].to(self.device),
+                            "token_type_ids": data["token_type_ids"].to(self.device),
+                            "attention_mask": data["attention_mask"].to(self.device),
+                        }
+                    )
+                    embedding.append(embeddings)
+                    document_id.append(data["document_id"])
+
+            embedding = torch.cat(embedding, dim=0)
+            document_id = torch.cat(document_id, dim=0).numpy()
+
+            self.p_embedding = {"embedding": embedding, "document_id": document_id}
+
+            print(
+                "passage embedding shape : {}".format(
+                    self.p_embedding["embedding"].shape
+                )
+            )
+            with open(emd_path, "wb") as file:
+                pickle.dump(self.p_embedding, file)
+            print("Embedding pickle saved.")
+
+    def retrieve(
+        self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
+    ) -> Union[Tuple[List, List], pd.DataFrame]:
+        assert self.p_embedding is not None, "get_sparse_embedding() 메소드를 먼저 수행해줘야합니다."
+
+        if isinstance(query_or_dataset, str):
+            doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
+            print("[Search query]\n", query_or_dataset, "\n")
+
+            for i in range(topk):
+                print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
+                print(self.wiki_df["text"][doc_indices[i]])
+
+            return (
+                doc_scores,
+                [self.wiki_df["text"][doc_indices[i]] for i in range(topk)],
+            )
+
+        elif isinstance(query_or_dataset, Dataset):
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                doc_scores, doc_indices = self.get_relevant_doc_bulk(
+                    query_or_dataset["question"], k=topk
+                )
+            for idx, example in enumerate(
+                tqdm(query_or_dataset, desc="Dense retrieval: ")
+            ):
+                tmp = {
+                    # Query와 해당 id를 반환합니다.
+                    "question": example["question"],
+                    "id": example["id"],
+                    # Retrieve한 Passage의 id, context를 반환합니다.
+                    "context": " ".join(
+                        [self.wiki_df["text"][pid] for pid in doc_indices[idx]]
+                    ),
+                }
+                if "context" in example.keys() and "answers" in example.keys():
+                    # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                    tmp["original_context"] = example["context"]
+                    tmp["answers"] = example["answers"]
+                total.append(tmp)
+
+            cqas = pd.DataFrame(total)
+            return cqas
+
+    def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
+        tokenized_query = self.tokenizer(query, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            q_embedding = self.model.get_question_embedding(tokenized_query)
+        result = torch.matmul(q_embedding, self.p_embedding["embedding"].T)
+        if not isinstance(result, np.ndarray):
+            result = result.detach().cpu().numpy()
+
+        sorted_result = np.argsort(result.squeeze())[::-1]
+        top_k_indeces = []
+        doc_ids = []
+        index = 0
+        # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
+        while len(top_k_indeces) < k:
+            doc_id = self.p_embedding["document_id"][sorted_result[index]]
+            if doc_id not in doc_ids:
+                top_k_indeces.append(sorted_result[index])
+                doc_ids.append(doc_id)
+            index += 1
+        doc_scores = result.squeeze()[top_k_indeces].tolist()
+        return doc_scores, doc_ids
+
+    def get_relevant_doc_bulk(
+        self, queries: List, k: Optional[int] = 1
+    ) -> Tuple[List, List]:
+        """
+        Arguments:
+            queries (List):
+                여러 개의 Query를 받습니다.
+            k (Optional[int]): 1
+                상위 몇 개의 Passage를 반환할지 정합니다.
+        Note:
+            vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
+        """
+        tokenized_queries = self.tokenizer(
+            queries,
+            return_tensors="pt",
+            max_length=64,
+            padding="max_length",
+            truncation=True,
+        ).to(self.device)
+
+        batch_size = 128
+        len_queries = len(queries)
+        iteration = len_queries // batch_size + bool(len_queries % batch_size)
+        q_embedding = []
+
+        with torch.no_grad():
+            for i in range(iteration):
+                batch = {
+                    k: v[i * batch_size : min((i + 1) * batch_size, len_queries)]
+                    for k, v in tokenized_queries.items()
+                }
+                q_embedding.append(self.model.get_question_embedding(batch))
+
+        q_embedding = torch.cat(q_embedding, dim=0)
+        result = torch.matmul(q_embedding, self.p_embedding["embedding"].T)
+        if not isinstance(result, np.ndarray):
+            result = result.detach().cpu().numpy()
+
+        bulk_doc_scores = []
+        bulk_doc_ids = []
+        for i in range(result.shape[0]):
+            sorted_result = np.argsort(result[i, :])[::-1]
+            top_k_indeces = []
+            doc_ids = []
+            index = 0
+            # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
+            while len(top_k_indeces) < k:
+                doc_id = self.p_embedding["document_id"][sorted_result[index]]
+                if doc_id not in doc_ids:
+                    top_k_indeces.append(sorted_result[index])
+                    doc_ids.append(doc_id)
+                index += 1
+            doc_scores = result[i, :][top_k_indeces].tolist()
+            bulk_doc_scores.append(doc_scores)
+            bulk_doc_ids.append(doc_ids)
+        return bulk_doc_scores, bulk_doc_ids
+
 
 def get_args():
     import argparse
@@ -1035,15 +1245,27 @@ def get_args():
     parser.add_argument(
         "--context_path", default="wikipedia_documents.json", type=str, help=""
     )
-    parser.add_argument("--method", default='tfidf', type=str, help="")
+    parser.add_argument(
+        "--passage_path",
+        default="wikipedia_passages.json",
+        type=str,
+        help="path of wikipedia passages",
+    )
+    parser.add_argument("--method", default="dpr", type=str, help="")
     parser.add_argument("--topk", default=10, type=int, help="")
+    parser.add_argument(
+        "--retriever_output_path",
+        default="/opt/level2_nlp_mrc-nlp-03/retriever_outputs/klue-bert-base",
+        type=str,
+        help="훈련된 DPR 모델의 output 경로",
+    )
 
     args = parser.parse_args()
     return args
 
 
 if __name__ == "__main__":
-    args=get_args()
+    args = get_args()
 
     # Test sparse
     org_dataset = load_from_disk(args.dataset_name)
@@ -1056,9 +1278,10 @@ if __name__ == "__main__":
     print("*" * 40, "query dataset", "*" * 40)
     print(full_ds)
 
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=False,)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name_or_path,
+        use_fast=False,
+    )
 
     # retriever = TfidfRetriever(
     #     tokenize_fn=tokenizer.tokenize,
@@ -1069,7 +1292,7 @@ if __name__ == "__main__":
 
     query = "대통령을 포함한 미국의 행정부 견제권을 갖는 국가 기관은?"
 
-    if args.method=='faiss':
+    if args.method == "faiss":
         retriever = FaissRetriever(
             tokenize_fn=tokenizer.tokenize,
             num_clusters=64,
@@ -1087,7 +1310,7 @@ if __name__ == "__main__":
 
             print("correct retrieval result by faiss", df["correct"].sum() / len(df))
 
-    elif args.method=='tfidf':
+    elif args.method == "tfidf":
         retriever = TfidfRetriever(
             tokenize_fn=tokenizer.tokenize,
             data_path=args.data_path,
@@ -1104,7 +1327,7 @@ if __name__ == "__main__":
         with timer("single query by exhaustive search"):
             scores, indices = retriever.retrieve(query, topk=args.topk)
 
-    elif args.method=='lsi':
+    elif args.method == "lsi":
         retriever = LatentSemanticIndexingRetriever(
             tokenize_fn=tokenizer.tokenize,
             data_path=args.data_path,
@@ -1112,6 +1335,25 @@ if __name__ == "__main__":
         )
         with timer("bulk query by exhaustive search"):
             df = retriever.retrieve(full_ds, topk=args.topk)
+            df["correct"] = df["original_context"] == df["context"]
+            print(
+                "correct retrieval result by exhaustive search",
+                df["correct"].sum() / len(df),
+            )
+
+        with timer("single query by exhaustive search"):
+            scores, indices = retriever.retrieve(query, topk=args.topk)
+
+    elif args.method == "dpr":
+        retriever = BaseDenseRetriever(
+            tokenize_fn=None,
+            retriever_path=args.retriever_output_path,
+            data_path=args.data_path,
+            passage_path=args.passage_path,
+            context_path=args.context_path,
+        )
+        with timer("bulk query by exhaustive search"):
+            df = retriever.retrieve(full_ds, topk=1)
             df["correct"] = df["original_context"] == df["context"]
             print(
                 "correct retrieval result by exhaustive search",
