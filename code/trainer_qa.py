@@ -18,6 +18,7 @@ Question-Answering task와 관련된 'Trainer'의 subclass 코드 입니다.
 
 from transformers import Trainer, is_datasets_available, is_torch_tpu_available
 from transformers.trainer_utils import PredictionOutput
+import pandas as pd
 
 if is_datasets_available():
     import datasets
@@ -60,7 +61,7 @@ class QuestionAnsweringTrainer(Trainer):
             )
 
         if self.post_process_function is not None and self.compute_metrics is not None:
-            eval_preds = self.post_process_function(
+            eval_preds, prediction_start_pos, context = self.post_process_function(
                 eval_examples, eval_dataset, output.predictions, self.args
             )
             metrics = self.compute_metrics(eval_preds)
@@ -68,6 +69,7 @@ class QuestionAnsweringTrainer(Trainer):
             self.log(metrics)
         else:
             metrics = {}
+            eval_preds = None
 
         if self.args.tpu_metrics_debug or self.args.debug:
             # tpu-comment: PyTorch/XLA에 대한 Logging debug metrics (compile, execute times, ops, etc.)
@@ -76,7 +78,18 @@ class QuestionAnsweringTrainer(Trainer):
         self.control = self.callback_handler.on_evaluate(
             self.args, self.state, self.control, metrics
         )
-        return metrics
+
+        if eval_preds:
+            prediction_text, answer = eval_preds
+            prediction_text, answer = pd.DataFrame(prediction_text), pd.DataFrame(answer)
+            prediction_start_pos=pd.DataFrame(prediction_start_pos.items(), columns=['id','prediction_start'])
+            prediction=pd.merge(prediction_text, prediction_start_pos,on='id')
+            answer = answer['answers'].apply(pd.Series)
+            answer['answer_start']=answer['answer_start'].apply(lambda x : x[0]).astype('int32')
+            answer['answer_text']=answer['text'].apply(lambda x : x[0])
+            eval_preds = pd.concat([prediction, answer[['answer_start','answer_text']]], axis=1)
+            eval_preds['context']=context
+        return metrics, eval_preds
 
     def predict(self, test_dataset, test_examples, ignore_keys=None):
         test_dataloader = self.get_test_dataloader(test_dataset)

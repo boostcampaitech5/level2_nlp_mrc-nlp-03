@@ -1146,8 +1146,9 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
             result = self.bm25.get_scores(tokenized_query)
         sorted_result = np.argsort(result)[::-1]
         doc_score = result[sorted_result].tolist()[:k]
-        # doc_indices = sorted_result.tolist()[:k]
-        doc_indices = self.ids[sorted_result].tolist()[:k]
+        doc_indices = sorted_result.tolist()[:k]
+        # doc_indices = self.ids[sorted_result].tolist()[:k]
+        print(doc_indices)
         return doc_score, doc_indices
 
     def get_relevant_doc_bulk(self, queries: List, k: Optional[int] = 1
@@ -1161,8 +1162,8 @@ class BM25SparseRetrieval(_BaseSparseRetriever):
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            # doc_indices.append(sorted_result.tolist()[:k])
-            doc_indices.append(self.ids[sorted_result].tolist()[:k])
+            doc_indices.append(sorted_result.tolist()[:k])
+            # doc_indices.append(self.ids[sorted_result].tolist()[:k])
         return doc_scores, doc_indices
 
 
