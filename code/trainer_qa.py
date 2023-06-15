@@ -134,6 +134,7 @@ class QuestionAnsweringTrainer(Trainer):
             #     prediction_loss_only=True if compute_metrics is None else None,
             #     ignore_keys=ignore_keys,
             # )
+            # 에러 발생 시 data_args.pad_to_max_length=True
             model = self.model
             model.eval()
             start_logits, end_logits = [], []
