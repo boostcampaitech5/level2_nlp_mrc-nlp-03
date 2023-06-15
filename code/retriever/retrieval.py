@@ -72,6 +72,7 @@ class _BaseRetriever:
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
         self.wiki_df = pd.DataFrame(wiki).T.set_index("document_id", drop=False)
+        self.wiki_df.drop_duplicates(subset=["text"], inplace=True)
 
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
         self.indexer = None  # build_faiss()로 생성합니다.
@@ -650,7 +651,7 @@ class BM25SparseRetrieval(_BaseRetriever):
             result = self.bm25.get_scores(tokenized_query)
         sorted_result = np.argsort(result)[::-1]
         doc_score = result[sorted_result].tolist()[:k]
-        doc_ids = self.wiki_df["document_id"][sorted_result[:k]].to_list()
+        doc_ids = self.wiki_df["document_id"].iloc[sorted_result[:k]].to_list()
         return doc_score, doc_ids
 
     def get_relevant_doc_bulk(
@@ -670,7 +671,9 @@ class BM25SparseRetrieval(_BaseRetriever):
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_ids.append(self.wiki_df["document_id"][sorted_result[:k]].to_list())
+            doc_ids.append(
+                self.wiki_df["document_id"].iloc[sorted_result[:k]].to_list()
+            )
         return doc_scores, doc_ids
 
 
@@ -678,7 +681,7 @@ def get_args():
     import argparse
 
     parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--method", default="dpr", type=str, help="Type of Retriever")
+    parser.add_argument("--method", default="bm25", type=str, help="Type of Retriever")
     parser.add_argument(
         "--dataset_name", default="./data/train_dataset", type=str, help=""
     )
