@@ -103,23 +103,23 @@ class _BaseRetriever:
         """
 
         if isinstance(query_or_dataset, str):
-            doc_scores, doc_indices = self.get_relevant_doc(query_or_dataset, k=topk)
+            doc_scores, doc_ids = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
 
             for i in range(topk):
                 print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
-                print(self.wiki_df["text"][doc_indices[i]])
+                print(self.wiki_df["text"][doc_ids[i]])
 
             return (
                 doc_scores,
-                [self.wiki_df["text"][doc_indices[i]] for i in range(topk)],
+                [self.wiki_df["text"][doc_ids[i]] for i in range(topk)],
             )
 
         elif isinstance(query_or_dataset, Dataset):
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
             with timer("query exhaustive search"):
-                doc_scores, doc_indices = self.get_relevant_doc_bulk(
+                doc_scores, doc_ids = self.get_relevant_doc_bulk(
                     query_or_dataset["question"], k=topk
                 )
             for idx, example in enumerate(
@@ -130,10 +130,8 @@ class _BaseRetriever:
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
-                    "context": [self.wiki_df["text"][pid] for pid in doc_indices[idx]],
-                    "document_id": [
-                        self.wiki_df["document_id"][pid] for pid in doc_indices[idx]
-                    ],
+                    "context": [self.wiki_df.loc[pid]["text"] for pid in doc_ids[idx]],
+                    "document_id": doc_ids[idx],
                 }
                 if "context" in example.keys() and "answers" in example.keys():
                     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
