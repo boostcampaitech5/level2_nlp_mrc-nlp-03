@@ -3,7 +3,7 @@ import os
 import sys
 
 from arguments import DataTrainingArguments, ModelArguments
-from datasets import DatasetDict, load_from_disk
+from datasets import DatasetDict, load_from_disk, load_dataset
 from models import ReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
@@ -53,6 +53,7 @@ def main(cfg: DictConfig):
     wandb.init(project='MRC',
                entity=None,
                name=run_name)
+    wandb.config.update({"max_seq_length":data_args.max_seq_length, "doc_stride":data_args.doc_stride})
     
 
     print(model_args.model_name_or_path)
@@ -71,8 +72,10 @@ def main(cfg: DictConfig):
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
-
-    datasets = load_from_disk(data_args.dataset_name)
+    if os.path.exists(data_args.dataset_name):
+        datasets = load_from_disk(data_args.dataset_name)
+    else:
+        datasets = load_dataset('dnjdsxor21/wiki-noise-for-qa')
     print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.

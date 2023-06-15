@@ -136,6 +136,11 @@ def postprocess_qa_predictions(
             # 각 featureure에 대한 모든 prediction을 가져옵니다.
             start_logits = all_start_logits[feature_index]
             end_logits = all_end_logits[feature_index]
+            # start_logits = np.exp(start_logits)
+            # start_logits = start_logits / start_logits.sum()
+            # end_logits = np.exp(end_logits)
+            # end_logits = end_logits / end_logits.sum()
+
             # logit과 original context의 logit을 mapping합니다.
             offset_mapping = features[feature_index]["offset_mapping"]
             # Optional : `token_is_max_context`, 제공되는 경우 현재 기능에서 사용할 수 있는 max context가 없는 answer를 제거합니다
@@ -162,7 +167,7 @@ def postprocess_qa_predictions(
             ].tolist()
 
             end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
-
+            
             for start_index in start_indexes:
                 for end_index in end_indexes:
                     # out-of-scope answers는 고려하지 않습니다.

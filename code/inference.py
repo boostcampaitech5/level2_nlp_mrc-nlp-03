@@ -50,6 +50,7 @@ def main(cfg: DictConfig):
     data_args = DataTrainingArguments(**cfg.get("data"))
     training_args = TrainingArguments(**cfg.get("trainer"))
     run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
+    print(f'inference.py starts at {run_name}')
     training_args.output_dir = os.path.join(training_args.output_dir, run_name)
     
 
