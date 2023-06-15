@@ -8,23 +8,19 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import logging
 import sys, os
 from typing import Callable, Dict, List, Tuple
-
+sys.path.append('code/retriever')
 import numpy as np
+from models import ReadModel
 from arguments import DataTrainingArguments, ModelArguments
-from datasets import (
-    Dataset,
-    DatasetDict,
-    Features,
-    Sequence,
-    Value,
-    load_from_disk
-)
+from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_from_disk
+from datetime import datetime, timedelta, timezone
 import evaluate
-from retrieval import TfidfRetriever, FaissRetriever
+from retriever.retrieval import TfidfRetriever, FaissRetriever, BaseDenseRetriever
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
     AutoModelForQuestionAnswering,
+    BertTokenizerFast,
     AutoTokenizer,
     DataCollatorWithPadding,
     EvalPrediction,
@@ -39,15 +35,19 @@ from utils_viewer import pred_df2html
 
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base="1.3",config_path="../configs",config_name="inference")
+
+@hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
 def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
     # Argument 정의된 dataclass들을 instanciate
-    model_args=ModelArguments(**cfg.get("model"))
-    data_args=DataTrainingArguments(**cfg.get("data"))
-    training_args=TrainingArguments(**cfg.get("trainer"))
+    model_args = ModelArguments(**cfg.get("model"))
+    data_args = DataTrainingArguments(**cfg.get("data"))
+    training_args = TrainingArguments(**cfg.get("trainer"))
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
+    training_args.output_dir = os.path.join(training_args.output_dir, run_name)
+    
 
     # training_args.do_train = True
 
@@ -62,7 +62,7 @@ def main(cfg: DictConfig):
     )
 
     # verbosity 설정 : Transformers logger의 정보로 사용합니다 (on main process only)
-    logger.info("Training/evaluation parameters %s", training_args)
+    # logger.info("Training/evaluation parameters %s", training_args)
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
@@ -77,21 +77,21 @@ def main(cfg: DictConfig):
         if model_args.config_name
         else model_args.model_name_or_path,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer = BertTokenizerFast.from_pretrained(
         model_args.tokenizer_name
         if model_args.tokenizer_name is not None
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = AutoModelForQuestionAnswering.from_pretrained(
+    model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
+        # from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
 
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
-        datasets = run_sparse_retrieval(
+        datasets = run_retrieval(
             tokenizer.tokenize,
             datasets,
             cfg,
@@ -104,7 +104,7 @@ def main(cfg: DictConfig):
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
 
-def run_sparse_retrieval(
+def run_retrieval(
     tokenize_fn: Callable[[str], List[str]],
     datasets: DatasetDict,
     cfg: DictConfig,
@@ -115,13 +115,11 @@ def run_sparse_retrieval(
 ) -> DatasetDict:
     # configs/retriever 에 yaml로 정의된 retriever를 instantiate
     # 바꾸고싶으면 configs/inference.yaml 의 retriever 키의 value를 바꾸면 됨.
-    retriever = hydra.utils.instantiate(
-        cfg.retriever,
-        tokenize_fn=tokenize_fn
-    )
+    retriever = hydra.utils.instantiate(cfg.retriever, tokenize_fn=tokenize_fn)
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
+    df['context'] = df['context'].map(lambda x: ' '.join(x))
 
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
@@ -132,6 +130,7 @@ def run_sparse_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
+        df=df[['context','id','question']]
 
     # train data 에 대해선 정답이 존재하므로 id question context answer 로 데이터셋이 구성됩니다.
     elif training_args.do_eval:
@@ -150,6 +149,7 @@ def run_sparse_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
+        df=df[['answers','context','id','question']]
     datasets = DatasetDict({"validation": Dataset.from_pandas(df, features=f)})
     return datasets
 
@@ -162,13 +162,12 @@ def run_mrc(
     tokenizer,
     model,
 ) -> None:
-
     # eval 혹은 prediction에서만 사용함
     column_names = datasets["validation"].column_names
 
     question_column_name = "question" if "question" in column_names else column_names[0]
     context_column_name = "context" if "context" in column_names else column_names[1]
-    answer_column_name = "answers" if "answers" in column_names else column_names[2]
+    # answer_column_name = "answers" if "answers" in column_names else column_names[2]
 
     # Padding에 대한 옵션을 설정합니다.
     # (question|context) 혹은 (context|question)로 세팅 가능합니다.
@@ -192,7 +191,9 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False if model.base_model_prefix=='roberta' else True,
+            return_token_type_ids=False
+            if model.config.model_type == "roberta"
+            else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -305,7 +306,10 @@ def run_mrc(
         trainer.log_metrics("test", metrics)
         trainer.save_metrics("test", metrics)
 
-        eval_preds.to_csv(os.path.join(training_args.output_dir, "eval_results.csv"), index=False)
+        eval_preds.to_csv(
+            os.path.join(training_args.output_dir, "eval_results.csv"), index=False
+        )
+
 
 if __name__ == "__main__":
     main()
