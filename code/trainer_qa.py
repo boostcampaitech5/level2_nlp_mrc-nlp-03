@@ -153,7 +153,7 @@ class QuestionAnsweringTrainer(Trainer):
                 columns=list(test_dataset.features.keys()),
             )
 
-        predictions, prediction_start_pos, context = self.post_process_function(
+        predictions = self.post_process_function(
             test_examples, test_dataset, output['predictions'], self.args
         )
         return predictions

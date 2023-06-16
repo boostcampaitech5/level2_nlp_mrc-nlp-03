@@ -28,6 +28,17 @@ def context_cleaning(context):
     return context
 
 
+def preprocess(text):
+    text = re.sub(r"\n", " ", text)
+    text = re.sub(r"\\n", " ", text)
+    text = re.sub(r"#", " ", text)
+    text = re.sub(r"([^ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z\d\s\.\,\'\"\<\>\!\@\#\$\%\^\&\*\(\)\_\+\-])", "", text) # wontaek preprocessing code
+    text = re.sub(r"[^A-Za-z0-9가-힣.?!,()~‘’“”"":%&《》〈〉''㈜·\-\'+\s一-龥]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()  # 두 개 이상의 연속된 공백을 하나로 치환
+    
+    return text
+
+
 if __name__ == "__main__":
     import json
 

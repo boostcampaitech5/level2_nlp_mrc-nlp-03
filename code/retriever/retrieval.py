@@ -25,6 +25,7 @@ except ImportError:
     from DPR_dataset import PassageDataset
 
 from rank_bm25 import BM25Okapi, BM25Plus
+from utils_retriever import preprocess
 
 
 @contextmanager
@@ -73,6 +74,10 @@ class _BaseRetriever:
             wiki = json.load(f)
         self.wiki_df = pd.DataFrame(wiki).T.set_index("document_id", drop=False)
         self.wiki_df.drop_duplicates(subset=["text"], inplace=True)
+
+        # preporcessing data
+        self.wiki_df["text"] = self.wiki_df["text"].apply(preprocess)
+        # self.wiki_df["text"] = "<" + [self.wiki_df["title"][i] + "> " + self.wiki_df["text"][i] for i in range(len(self.wiki_df))]
 
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
         self.indexer = None  # build_faiss()로 생성합니다.
@@ -629,7 +634,7 @@ class BM25SparseRetrieval(_BaseRetriever):
             with open(bm25_path, "rb") as file:
                 self.bm25 = pickle.load(file)
             print("Embedding pickle load.")
-
+            print("corpus size : ", self.bm25.corpus_size)
             # print("passage embedding shape : {}".format(self.bm25.corpus_size))
 
         else:
@@ -644,6 +649,7 @@ class BM25SparseRetrieval(_BaseRetriever):
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
         with timer("transform"):
+            query = preprocess(query)
             tokenized_query = self.tokenize_fn(query)
         with timer("query ex search"):
             result = self.bm25.get_scores(tokenized_query)
@@ -656,6 +662,7 @@ class BM25SparseRetrieval(_BaseRetriever):
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
         with timer("transform"):
+            queries = [preprocess(query) for query in queries]
             tokenized_queries = [self.tokenize_fn(query) for query in queries]
         with timer("query ex search"):
             result = np.array(
