@@ -50,17 +50,19 @@ class DPR(nn.Module):
 
     def forward(
         self,
-        q_input_ids,
-        q_token_type_ids,
-        q_attention_mask,
-        p_input_ids,
-        p_token_type_ids,
-        p_attention_mask,
+        q_input_ids: torch.Tensor,
+        q_token_type_ids: torch.Tensor,
+        q_attention_mask: torch.Tensor,
+        p_input_ids: torch.Tensor,
+        p_token_type_ids: torch.Tensor,
+        p_attention_mask: torch.Tensor,
         return_loss=True,
     ):
         """
         in-batch negative로 similarity score와 nll loss를 계산해서 반환합니다.
         """
+        batch_size = p_input_ids.shape[0]
+        samples_per_query = p_input_ids.shape[1]  # positive + negative sample 갯수
         q_outputs = self.q_encoder(
             {
                 "input_ids": q_input_ids,
@@ -70,17 +72,25 @@ class DPR(nn.Module):
         )  # (batch_size, emb_dim)
         p_outputs = self.p_encoder(
             {
-                "input_ids": p_input_ids,
-                "token_type_ids": p_token_type_ids,
-                "attention_mask": p_attention_mask,
+                "input_ids": p_input_ids.view(batch_size * samples_per_query, -1),
+                "token_type_ids": p_token_type_ids.view(
+                    batch_size * samples_per_query, -1
+                ),
+                "attention_mask": p_attention_mask.view(
+                    batch_size * samples_per_query, -1
+                ),
             }
-        )  # (batch_size, emb_dim)
+        )  # (batch_size * samples_per_query, emb_dim)
 
         sim_scores = torch.matmul(
             q_outputs, torch.transpose(p_outputs, 0, 1)
-        )  # (batch_size, batch_size)
+        )  # (batch_size, batch_size * samples_per_query)
         sim_scores = F.log_softmax(sim_scores, dim=1)
-        targets = torch.arange(0, sim_scores.shape[0]).long().to(sim_scores.device)
+        targets = (
+            torch.arange(0, sim_scores.shape[1], step=samples_per_query)
+            .long()
+            .to(sim_scores.device)
+        )
 
         loss = F.nll_loss(sim_scores, targets)
 
