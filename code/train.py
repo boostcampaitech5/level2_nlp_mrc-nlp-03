@@ -4,7 +4,7 @@ import sys
 
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import DatasetDict, load_from_disk
-from models import ReadModel
+from models import ReadModel, MultiReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -91,6 +91,7 @@ def main(cfg: DictConfig):
     model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
+        tokenizer=tokenizer,
     )
 
     print(

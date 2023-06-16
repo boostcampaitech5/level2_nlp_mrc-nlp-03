@@ -10,7 +10,7 @@ import sys, os
 from typing import Callable, Dict, List, Tuple
 sys.path.append('code/retriever')
 import numpy as np
-from models import ReadModel
+from models import ReadModel, MultiReadModel
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_from_disk
 from datetime import datetime, timedelta, timezone
@@ -89,8 +89,8 @@ def main(cfg: DictConfig):
     )
     model = ReadModel.from_pretrained(
         model_args.model_name_or_path,
-        # from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
+        tokenizer=tokenizer,
     )
 
     # True일 경우 : run passage retrieval
@@ -124,7 +124,7 @@ def run_retrieval(
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
     df['context'] = df['context'].map(lambda x: ' '.join(x))
-
+    df = df[['context','id','question']]
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
