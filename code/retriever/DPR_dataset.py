@@ -21,6 +21,7 @@ class DPRDataset(Dataset):
         split: str,
     ):
         dataset = load_from_disk(data_args.dataset_name)[split]
+
         self.dataset = dataset.map(
             self.get_tokenized_passage,
             fn_kwargs={
@@ -52,10 +53,12 @@ class DPRDataset(Dataset):
         question도 tokenize해서 같이 반환합니다.
         """
 
-        max_passage_only_length = max_passage_length - 2  # for special tokens
+        title = example["title"]
         context = example["context"]
         question = example["question"]
-        hard_negatives = example["hard_negative_text"]
+        hard_negative_title = example["hard_negative_title"]
+        hard_negative_context = example["hard_negative_text"]
+        tokenized_title = tokenizer(title, add_special_tokens=False)
         tokenized_context = tokenizer(
             context,
             add_special_tokens=False,
@@ -67,11 +70,36 @@ class DPRDataset(Dataset):
             padding="max_length",
             truncation=True,
         )
+        max_passage_only_length = (
+            max_passage_length - len(tokenized_title["input_ids"]) - 3
+        )  # for title and special tokens
         answer_char = example["answers"]["text"]
         start_char = example["answers"]["answer_start"][0]
         end_char = start_char + len(answer_char)
         offset_mapping = tokenized_context.pop("offset_mapping")
         len_tokens = len(offset_mapping)
+
+        def add_title(tokenized_title, tokenized_context):
+            input_ids = (
+                tokenized_title["input_ids"]
+                + [tokenizer.sep_token_id]
+                + tokenized_context["input_ids"]
+            )
+            token_type_ids = (
+                tokenized_title["token_type_ids"]
+                + [tokenized_context["token_type_ids"][0]]
+                + tokenized_context["token_type_ids"]
+            )
+            attention_mask = (
+                tokenized_title["attention_mask"]
+                + [tokenized_context["attention_mask"][0]]
+                + tokenized_context["attention_mask"]
+            )
+            return {
+                "input_ids": input_ids,
+                "token_type_ids": token_type_ids,
+                "attention_mask": attention_mask,
+            }
 
         def add_special_tokens(tokenized):
             """
@@ -111,14 +139,18 @@ class DPRDataset(Dataset):
 
         def add_hard_negatives(
             tokenized_context: dict,
-            hard_negatives: List,
+            hard_negative_title: List,
+            hard_negative_context: List,
             num_hard_negatives: int,
             max_passage_length: int,
         ):
             tokenized_context = {k: [v] for k, v in tokenized_context.items()}
             for i in range(num_hard_negatives):
+                joined_hard_negative = tokenizer.sep_token.join(
+                    [hard_negative_title[i], hard_negative_context[i]]
+                )
                 tokenized_hard_negative = tokenizer(
-                    hard_negatives[i],
+                    joined_hard_negative,
                     max_length=max_passage_length,
                     padding="max_length",
                     truncation=True,
@@ -129,10 +161,12 @@ class DPRDataset(Dataset):
 
         # context가 이미 max_passage_length보다 짧은 경우 그대로 반환합니다.
         if len_tokens <= max_passage_only_length:
+            tokenized_context = add_title(tokenized_title, tokenized_context)
             tokenized_context = add_special_tokens(tokenized_context)
             tokenized_context = add_hard_negatives(
                 tokenized_context,
-                hard_negatives,
+                hard_negative_title,
+                hard_negative_context,
                 num_hard_negatives,
                 max_passage_length,
             )
@@ -176,15 +210,20 @@ class DPRDataset(Dataset):
         if passage_end_index >= len_tokens:
             passage_start_index -= passage_end_index - (len_tokens - 1)
             passage_end_index = len_tokens - 1
-
-        tokenized_context = add_special_tokens(
+        tokenized_context = add_title(
+            tokenized_title,
             {
                 k: v[passage_start_index:passage_end_index]
                 for k, v in tokenized_context.items()
-            }
+            },
         )
+        tokenized_context = add_special_tokens(tokenized_context)
         tokenized_context = add_hard_negatives(
-            tokenized_context, hard_negatives, num_hard_negatives, max_passage_length
+            tokenized_context,
+            hard_negative_title,
+            hard_negative_context,
+            num_hard_negatives,
+            max_passage_length,
         )
 
         return {
@@ -202,6 +241,7 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained("klue/bert-base")
     args = DataTrainingArguments()
+    args.dataset_name = "./data/negative_train_dataset"
     dataset = DPRDataset(args, tokenizer, "validation")
 
     print(dataset[0])
