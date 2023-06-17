@@ -19,13 +19,12 @@ from tqdm.auto import tqdm
 
 try:
     from retriever.DPR_model import DPR
-    from retriever.DPR_dataset import PassageDataset
+    from retriever.utils_retriever import Preprocessor
 except ImportError:
     from DPR_model import DPR
-    from DPR_dataset import PassageDataset
+    from utils_retriever import Preprocessor
 
 from rank_bm25 import BM25Okapi, BM25Plus
-from utils_retriever import preprocess
 
 
 @contextmanager
@@ -44,6 +43,7 @@ class _BaseRetriever:
     def __init__(
         self,
         tokenize_fn,
+        preprocessor=Preprocessor,
         data_path: Optional[str] = "./data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
@@ -69,18 +69,22 @@ class _BaseRetriever:
         """
 
         self.tokenize_fn = tokenize_fn
+        self.preprocessor = preprocessor
         self.data_path = data_path
         with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
             wiki = json.load(f)
-        self.wiki_df = pd.DataFrame(wiki).T.set_index("document_id", drop=False)
-        self.wiki_df.drop_duplicates(subset=["text"], inplace=True)
-
-        # preporcessing data
-        self.wiki_df["text"] = self.wiki_df["text"].apply(preprocess)
-        # self.wiki_df["text"] = "<" + [self.wiki_df["title"][i] + "> " + self.wiki_df["text"][i] for i in range(len(self.wiki_df))]
+        self.wiki_df = pd.DataFrame(wiki).T
+        self.wiki_df["preprocessed_text"] = self.wiki_df["text"].apply(
+            self.preprocessor.preprocess
+        )
+        self.wiki_df["preprocessed_text"] = self.wiki_df.apply(
+            lambda row: f"{row['title']} {row['preprocessed_text']}", axis=1
+        )
+        self.wiki_df.drop_duplicates(
+            subset=["preprocessed_text"], inplace=True, ignore_index=True
+        )
 
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
-        self.indexer = None  # build_faiss()로 생성합니다.
 
         self.get_embedding()
 
@@ -108,25 +112,28 @@ class _BaseRetriever:
         """
 
         if isinstance(query_or_dataset, str):
-            doc_scores, doc_ids = self.get_relevant_doc(query_or_dataset, k=topk)
+            query = self.preprocessor.preprocess(query)
+            doc_scores, doc_indeces = self.get_relevant_doc(query_or_dataset, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
 
             for i in range(topk):
                 print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
-                print(self.wiki_df["text"][doc_ids[i]])
+                print(self.wiki_df["text"][doc_indeces[i]])
 
             return (
                 doc_scores,
-                [self.wiki_df["text"][doc_ids[i]] for i in range(topk)],
+                [self.wiki_df["text"][doc_indeces[i]] for i in range(topk)],
             )
 
         elif isinstance(query_or_dataset, Dataset):
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
+            queries = [
+                self.preprocessor.preprocess(query)
+                for query in query_or_dataset["question"]
+            ]
             with timer("query exhaustive search"):
-                doc_scores, doc_ids = self.get_relevant_doc_bulk(
-                    query_or_dataset["question"], k=topk
-                )
+                doc_scores, doc_indeces = self.get_relevant_doc_bulk(queries, k=topk)
             for idx, example in enumerate(
                 tqdm(query_or_dataset, desc="Sparse retrieval: ")
             ):
@@ -135,8 +142,10 @@ class _BaseRetriever:
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
-                    "context": [self.wiki_df.loc[pid]["text"] for pid in doc_ids[idx]],
-                    "document_id": doc_ids[idx],
+                    "context": [self.wiki_df["text"][pid] for pid in doc_indeces[idx]],
+                    "document_id": [
+                        self.wiki_df["document_id"][pid] for pid in doc_indeces[idx]
+                    ],
                 }
                 if "context" in example.keys() and "answers" in example.keys():
                     # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
@@ -161,10 +170,14 @@ class _BaseRetriever:
         topk_corrects = [0] * len(topk_list)
 
         for idx, row in result_df.iterrows():
-            if row["original_document_id"] not in row["document_id"]:
+            org_context = self.preprocessor.preprocess(row["original_context"])
+            contexts = [
+                self.preprocessor.preprocess(context) for context in row["context"]
+            ]
+            if org_context not in contexts:
                 continue
 
-            k = row["document_id"].index(row["original_document_id"]) + 1
+            k = contexts.index(org_context) + 1
 
             for i, topk in enumerate(topk_list):
                 if k <= topk:
@@ -197,11 +210,13 @@ class TfidfRetriever(_BaseRetriever):
     def __init__(
         self,
         tokenize_fn,
+        preprocessor: Preprocessor,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
         super().__init__(
             tokenize_fn,
+            preprocessor,
             data_path,
             context_path,
         )
@@ -226,11 +241,7 @@ class TfidfRetriever(_BaseRetriever):
             with open(tfidfv_path, "rb") as file:
                 self.tfidfv = pickle.load(file)
             print("Embedding pickle load.")
-            print(
-                "passage embedding shape : {}".format(
-                    self.p_embedding["embedding"].shape
-                )
-            )
+            print("passage embedding shape : {}".format(self.p_embedding.shape))
         else:
             # Transform by vectorizer
             self.tfidfv = TfidfVectorizer(
@@ -239,16 +250,10 @@ class TfidfRetriever(_BaseRetriever):
                 max_features=50000,
             )
             print("Build passage embedding")
-            embedding = self.tfidfv.fit_transform(self.wiki_df["text"].to_list())
-            self.p_embedding = {
-                "embedding": embedding,
-                "document_id": self.wiki_df["document_id"].to_numpy(),
-            }
-            print(
-                "passage embedding shape : {}".format(
-                    self.p_embedding["embedding"].shape
-                )
+            self.p_embedding = self.tfidfv.fit_transform(
+                self.wiki_df["preprocessed_text"].to_list()
             )
+            print("passage embedding shape : {}".format(self.p_embedding.shape))
             with open(emd_path, "wb") as file:
                 pickle.dump(self.p_embedding, file)
             with open(tfidfv_path, "wb") as file:
@@ -273,15 +278,15 @@ class TfidfRetriever(_BaseRetriever):
         ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
         with timer("query ex search"):
-            result = np.dot(query_vec, self.p_embedding["embedding"].T)
+            result = np.dot(query_vec, self.p_embedding.T)
         if not isinstance(result, np.ndarray):
             result = result.toarray()
 
         sorted_result = np.argsort(result.squeeze())[::-1]
 
         doc_score = result.squeeze()[sorted_result].tolist()[:k]
-        doc_ids = self.p_embedding["document_id"][sorted_result[:k]].tolist()
-        return doc_score, doc_ids
+        doc_indeces = sorted_result.tolist()[:k]
+        return doc_score, doc_indeces
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -301,7 +306,7 @@ class TfidfRetriever(_BaseRetriever):
             np.sum(query_vec) != 0
         ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
 
-        result = query_vec * self.p_embedding["embedding"].T
+        result = query_vec * self.p_embedding.T
         if not isinstance(result, np.ndarray):
             result = result.toarray()
         doc_scores = []
@@ -309,9 +314,7 @@ class TfidfRetriever(_BaseRetriever):
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_indices.append(
-                self.p_embedding["document_id"][sorted_result[:k]].tolist()
-            )
+            doc_indices.append(sorted_result.tolist()[:k])
         return doc_scores, doc_indices
 
 
@@ -437,6 +440,7 @@ class BaseDenseRetriever(_BaseRetriever):
     def __init__(
         self,
         tokenize_fn,
+        preprocessor: Preprocessor,
         retriever_path: str,
         data_path: Optional[str] = "./data/",
         passage_path: Optional[str] = "wikipedia_passages.json",
@@ -451,19 +455,21 @@ class BaseDenseRetriever(_BaseRetriever):
             context_path (Optional[str], optional): wikipedia document json파일의 경로입니다. Defaults to "wikipedia_documents.json".
         """
         if tokenize_fn is not None:
-            logging.warn(
+            logging.warning(
                 "tokenize_fn으로 전달한 tokenizer는 사용되지 않습니다. DPR 학습 시에 사용한 tokenizer를 사용합니다."
             )
             tokenize_fn = None
         with open(os.path.join(retriever_path, "encoder_model_name.txt"), "r") as f:
             model_name = f.readline()
         self.device = "cuda" if torch.cuda.is_available else "cpu"
-        self.passage_path = passage_path
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = DPR(None, for_train=False, output_dir=retriever_path)
         self.model = self.model.to(self.device)
         self.model.eval()
-        super().__init__(None, data_path, context_path)
+        with open(os.path.join(data_path, passage_path)) as f:
+            passages = json.load(f)
+        self.passages_df = pd.DataFrame(passages).T
+        super().__init__(None, preprocessor, data_path, context_path)
 
     def get_embedding(self):
         pickle_name = f"passage_embedding.bin"
@@ -473,61 +479,62 @@ class BaseDenseRetriever(_BaseRetriever):
             with open(emd_path, "rb") as file:
                 self.p_embedding = pickle.load(file)
             print("Embedding pickle load.")
-            print(
-                "passage embedding shape : {}".format(
-                    self.p_embedding["embedding"].shape
-                )
-            )
+            print("passage embedding shape : {}".format(self.p_embedding.shape))
         else:
-            passage_dataset = PassageDataset(
-                os.path.join(self.data_path, self.passage_path),
-                tokenizer=self.tokenizer,
-                max_len=384,
-            )
+            # passage_dataset = PassageDataset(
+            #     os.path.join(self.data_path, self.passage_path),
+            #     tokenizer=self.tokenizer,
+            #     max_len=512,
+            # )
 
-            def collate_fn(batch):
-                keys = batch[0].keys()
-                batched_data = {}
+            # def collate_fn(batch):
+            #     keys = batch[0].keys()
+            #     batched_data = {}
 
-                for key in keys:
-                    batched_data[key] = torch.tensor([sample[key] for sample in batch])
+            #     for key in keys:
+            #         batched_data[key] = torch.tensor([sample[key] for sample in batch])
 
-                return batched_data
+            #     return batched_data
 
-            dataloader = DataLoader(
-                passage_dataset,
-                batch_size=512,
-                num_workers=4,
-                collate_fn=collate_fn,
-            )
-            embedding = []
-            document_id = []
+            # dataloader = DataLoader(
+            #     passage_dataset,
+            #     batch_size=512,
+            #     num_workers=4,
+            #     collate_fn=collate_fn,
+            # )
+            passages = [
+                self.tokenizer.sep_token.join(pair)
+                for pair in zip(self.passages_df["title"], self.passages_df["text"])
+            ]
+            embeddings = []
+            batch_size = 512
             with torch.no_grad():
-                for data in tqdm(
-                    dataloader,
-                    desc="Build passage embedding",
-                    total=len(dataloader),
+                for idx in tqdm(
+                    range(0, len(passages), batch_size), desc="Build passage embedding"
                 ):
-                    embeddings = self.model.get_passage_embedding(
+                    tokenized = self.tokenizer(
+                        passages[idx : idx + batch_size],
+                        max_length=512,
+                        padding="max_length",
+                        truncation=True,
+                        return_tensors="pt",
+                    )
+                    embedding = self.model.get_passage_embedding(
                         {
-                            "input_ids": data["input_ids"].to(self.device),
-                            "token_type_ids": data["token_type_ids"].to(self.device),
-                            "attention_mask": data["attention_mask"].to(self.device),
+                            "input_ids": tokenized["input_ids"].to(self.device),
+                            "token_type_ids": tokenized["token_type_ids"].to(
+                                self.device
+                            ),
+                            "attention_mask": tokenized["attention_mask"].to(
+                                self.device
+                            ),
                         }
                     )
-                    embedding.append(embeddings)
-                    document_id.append(data["document_id"])
+                    embeddings.append(embedding)
 
-            embedding = torch.cat(embedding, dim=0)
-            document_id = torch.cat(document_id, dim=0).numpy()
+            self.p_embedding = torch.cat(embeddings, dim=0)
 
-            self.p_embedding = {"embedding": embedding, "document_id": document_id}
-
-            print(
-                "passage embedding shape : {}".format(
-                    self.p_embedding["embedding"].shape
-                )
-            )
+            print("passage embedding shape : {}".format(self.p_embedding.shape))
             with open(emd_path, "wb") as file:
                 pickle.dump(self.p_embedding, file)
             print("Embedding pickle saved.")
@@ -536,23 +543,28 @@ class BaseDenseRetriever(_BaseRetriever):
         tokenized_query = self.tokenizer(query, return_tensors="pt").to(self.device)
         with torch.no_grad():
             q_embedding = self.model.get_question_embedding(tokenized_query)
-        result = torch.matmul(q_embedding, self.p_embedding["embedding"].T)
+        result = torch.matmul(q_embedding, self.p_embedding.T)
         if not isinstance(result, np.ndarray):
             result = result.detach().cpu().numpy()
 
         sorted_result = np.argsort(result.squeeze())[::-1]
-        top_k_indeces = []
+        p_indeces = []
         doc_ids = []
         index = 0
         # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
-        while len(top_k_indeces) < k:
-            doc_id = self.p_embedding["document_id"][sorted_result[index]]
+        while len(p_indeces) < k:
+            doc_id = self.passages_df["document_id"][sorted_result[index]]
             if doc_id not in doc_ids:
-                top_k_indeces.append(sorted_result[index])
+                p_indeces.append(sorted_result[index])
                 doc_ids.append(doc_id)
             index += 1
-        doc_scores = result.squeeze()[top_k_indeces].tolist()
-        return doc_scores, doc_ids
+        doc_scores = result.squeeze()[p_indeces].tolist()
+        doc_indeces = [
+            self.wiki_df.index[self.wiki_df["document_id"] == doc_id].item()
+            for doc_id in doc_ids
+        ]
+
+        return doc_scores, doc_indeces
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -573,51 +585,51 @@ class BaseDenseRetriever(_BaseRetriever):
         ).to(self.device)
 
         batch_size = 128
-        len_queries = len(queries)
-        iteration = len_queries // batch_size + bool(len_queries % batch_size)
         q_embedding = []
 
         with torch.no_grad():
-            for i in range(iteration):
-                batch = {
-                    k: v[i * batch_size : min((i + 1) * batch_size, len_queries)]
-                    for k, v in tokenized_queries.items()
-                }
+            for i in range(0, len(queries), batch_size):
+                batch = {k: v[i : i + batch_size] for k, v in tokenized_queries.items()}
                 q_embedding.append(self.model.get_question_embedding(batch))
 
         q_embedding = torch.cat(q_embedding, dim=0)
-        result = torch.matmul(q_embedding, self.p_embedding["embedding"].T)
+        result = torch.matmul(q_embedding, self.p_embedding.T)
         if not isinstance(result, np.ndarray):
             result = result.detach().cpu().numpy()
 
         bulk_doc_scores = []
-        bulk_doc_ids = []
+        bulk_doc_indeces = []
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
-            top_k_indeces = []
+            p_indeces = []
             doc_ids = []
             index = 0
             # top k개의 passage 중에 동일한 document에서 나온 passage가 있을 수 있습니다. 중복된 document를 제외하고 top k개의 document를 반환합니다.
-            while len(top_k_indeces) < k:
-                doc_id = self.p_embedding["document_id"][sorted_result[index]]
+            while len(p_indeces) < k:
+                doc_id = self.passages_df["document_id"][sorted_result[index]]
                 if doc_id not in doc_ids:
-                    top_k_indeces.append(sorted_result[index])
+                    p_indeces.append(sorted_result[index])
                     doc_ids.append(doc_id)
                 index += 1
-            doc_scores = result[i, :][top_k_indeces].tolist()
+            doc_scores = result[i, :][p_indeces].tolist()
+            doc_indeces = [
+                self.wiki_df.index[self.wiki_df["document_id"] == doc_id].item()
+                for doc_id in doc_ids
+            ]
             bulk_doc_scores.append(doc_scores)
-            bulk_doc_ids.append(doc_ids)
-        return bulk_doc_scores, bulk_doc_ids
+            bulk_doc_indeces.append(doc_indeces)
+        return bulk_doc_scores, bulk_doc_indeces
 
 
 class BM25SparseRetrieval(_BaseRetriever):
     def __init__(
         self,
         tokenize_fn,
+        preprocessor: Preprocessor,
         data_path: Optional[str] = "../data/",
         context_path: Optional[str] = "wikipedia_documents.json",
     ) -> None:
-        super().__init__(tokenize_fn, data_path, context_path)
+        super().__init__(tokenize_fn, preprocessor, data_path, context_path)
 
     def get_embedding(self) -> None:
         """
@@ -640,7 +652,7 @@ class BM25SparseRetrieval(_BaseRetriever):
         else:
             print("Build passage embedding")
             self.bm25 = BM25Okapi(
-                self.wiki_df["text"].to_list(), tokenizer=self.tokenize_fn
+                self.wiki_df["preprocessed_text"].to_list(), tokenizer=self.tokenize_fn
             )
             # self.bm25 = BM25Plus(self.contexts, tokenizer=self.tokenize_fn)
             with open(bm25_path, "wb") as file:
@@ -649,20 +661,18 @@ class BM25SparseRetrieval(_BaseRetriever):
 
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
         with timer("transform"):
-            query = preprocess(query)
             tokenized_query = self.tokenize_fn(query)
         with timer("query ex search"):
             result = self.bm25.get_scores(tokenized_query)
         sorted_result = np.argsort(result)[::-1]
         doc_score = result[sorted_result].tolist()[:k]
-        doc_ids = self.wiki_df["document_id"].iloc[sorted_result[:k]].to_list()
-        return doc_score, doc_ids
+        doc_indeces = sorted_result.tolist()[:k]
+        return doc_score, doc_indeces
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
         with timer("transform"):
-            queries = [preprocess(query) for query in queries]
             tokenized_queries = [self.tokenize_fn(query) for query in queries]
         with timer("query ex search"):
             result = np.array(
@@ -672,14 +682,12 @@ class BM25SparseRetrieval(_BaseRetriever):
                 ]
             )
         doc_scores = []
-        doc_ids = []
+        doc_indeces = []
         for i in range(result.shape[0]):
             sorted_result = np.argsort(result[i, :])[::-1]
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
-            doc_ids.append(
-                self.wiki_df["document_id"].iloc[sorted_result[:k]].to_list()
-            )
-        return doc_scores, doc_ids
+            doc_indeces.append(sorted_result.tolist()[:k])
+        return doc_scores, doc_indeces
 
 
 def get_args():
@@ -735,6 +743,8 @@ if __name__ == "__main__":
         use_fast=False,
     )
 
+    preprocessor = Preprocessor(no_other_languages=False, quoat_normalize=True)
+
     if args.method == "faiss":
         retriever = FaissRetriever(
             tokenize_fn=tokenizer.tokenize,
@@ -746,6 +756,7 @@ if __name__ == "__main__":
     elif args.method == "tfidf":
         retriever = TfidfRetriever(
             tokenize_fn=tokenizer.tokenize,
+            preprocessor=preprocessor,
             data_path=args.data_path,
             context_path=args.context_path,
         )
@@ -753,6 +764,7 @@ if __name__ == "__main__":
     elif args.method == "dpr":
         retriever = BaseDenseRetriever(
             tokenize_fn=tokenizer,
+            preprocessor=preprocessor,
             retriever_path=args.retriever_output_path,
             data_path=args.data_path,
             passage_path=args.passage_path,
@@ -762,6 +774,7 @@ if __name__ == "__main__":
     elif args.method == "bm25":
         retriever = BM25SparseRetrieval(
             tokenize_fn=tokenizer.tokenize,
+            preprocessor=preprocessor,
             data_path=args.data_path,
             context_path=args.context_path,
         )
