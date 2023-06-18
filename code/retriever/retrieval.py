@@ -112,8 +112,8 @@ class _BaseRetriever:
         """
 
         if isinstance(query_or_dataset, str):
-            query = self.preprocessor.preprocess(query)
-            doc_scores, doc_indeces = self.get_relevant_doc(query_or_dataset, k=topk)
+            query = self.preprocessor.preprocess(query_or_dataset)
+            doc_scores, doc_indeces = self.get_relevant_doc(query, k=topk)
             print("[Search query]\n", query_or_dataset, "\n")
 
             for i in range(topk):
