@@ -241,6 +241,8 @@ def run_mrc(
 
                 del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
                 del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
+                tokenized_examples["start_positions"][i] -= 1
+                tokenized_examples["end_positions"][i] -= 1
 
         return tokenized_examples
 
