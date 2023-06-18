@@ -45,6 +45,7 @@ EVAL_PARAGRAPH_TEMPLATE = """
 PRED_PARAGRAPH_TEMPLATE = """
     <h1>$id</h1>
     <h2>question : $question</h2>
+    <h3>predict : $predict</h3>
     <p>
         $paragraph
     </p>
@@ -76,7 +77,7 @@ def eval_fill_color_text(context, pred_start, pred_text, answer_start, answer_te
 def pred_fill_color_text(context, pred_start, pred_text):
     pred_end=pred_start+len(pred_text)
 
-    span_start='<span style="color: blue;">'
+    span_start='<span style="background-color: blue;color: white;">'
     span_end='</span>'
 
     context=context[:pred_start] + span_start + context[pred_start:pred_end] + span_end + context[pred_end:]
@@ -117,6 +118,7 @@ def pred_df2paragraph(df:pd.DataFrame, paragraph_template):
         dict_data={}
         dict_data['id']=data['id']
         dict_data['question']=data['question']
+        dict_data['predict']=data['prediction_text']
         dict_data['paragraph']=pred_fill_color_text(
             data['context'],
             data['prediction_start'],
