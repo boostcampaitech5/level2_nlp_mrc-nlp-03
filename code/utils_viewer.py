@@ -11,6 +11,8 @@ EVAL_TEMPLATE = """
     <title>evaluation results</title>
 </head>
 <body>
+    <h2>정답 : <span style="color: blue;">파란색</span></h2>
+    <h2>예측 : <span style="color: red;">빨간색</span></h2>
     $paragraphs
 </body>
 </html>
@@ -33,6 +35,8 @@ EVAL_PARAGRAPH_TEMPLATE = """
     <h1>$id</h1>
     <h2>exact match : $is_match</h2>
     <h2>question : $question</h2>
+    <h3>answer : $answer</h3>
+    <h3>predict : $predict</h3>
     <p>
         $paragraph
     </p>
@@ -54,8 +58,8 @@ def eval_fill_color_text(context, pred_start, pred_text, answer_start, answer_te
     elif pred_start<answer_start<pred_end:
         answer_start=pred_end+1
 
-    red_start='<span style="color: red;">'
-    blue_start='<span style="color: blue;">'
+    red_start='<span style="background-color: red;color: white;">'
+    blue_start='<span style="background-color: blue;color: white;">'
     span_end='</span>'
 
     if pred_start==answer_start and pred_text==answer_text:
@@ -89,7 +93,9 @@ def eval_df2paragraph(df:pd.DataFrame, paragraph_template):
         dict_data={}
         dict_data['id']=data['id']
         dict_data['question']=data['question']
-        dict_data['is_match']= (data['prediction_start']==data['answer_start']) and (data['prediction_text']==data['answer_text'])
+        dict_data['answer']=data['answer_text']
+        dict_data['predict']=data['prediction_text']
+        dict_data['is_match']= (data['prediction_text']==data['answer_text'])
         dict_data['paragraph']=eval_fill_color_text(
             data['context'],
             data['prediction_start'],
@@ -143,5 +149,6 @@ def pred_df2html(path: str = "./outputs/test_dataset/pred_results.csv"):
         file.write(final_html)
 
 if __name__=="__main__":
-    eval_df2html()
-    pred_df2html()
+    eval_df2html("/opt/ml/tests/level2_nlp_mrc-nlp-03/outputs/train_dataset/2023-06-18_07:28:56/eval_results.csv")
+    eval_df2html("/opt/ml/tests/level2_nlp_mrc-nlp-03/outputs/train_dataset/2023-06-18_08:16:27/eval_results.csv")
+    # pred_df2html()
