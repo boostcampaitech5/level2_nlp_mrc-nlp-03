@@ -11,6 +11,8 @@ class ReadModel(PreTrainedModel):
         self.num_labels = 2
         self.model_type = config.model_type
         self.tokenizer = tokenizer
+        self.activation = nn.Tanh()
+        self.dropout = nn.Dropout(p=0.1)
         print(f'model_type: {self.model_type}')
         if 'roberta' in config.model_type:
             self.roberta = RobertaModel(config,add_pooling_layer=False)
@@ -147,6 +149,7 @@ class MultiReadModel(ReadModel):
             raise Exception ("tokenizer needed")
         self.sep_pooler = nn.Linear(config.hidden_size, config.hidden_size)
         self.binary_classifier = nn.Linear(config.hidden_size, 1)
+        self.pooler = nn.Linear(config.hidden_size, config.hidden_size)
 
     def forward(
             self,
@@ -207,15 +210,25 @@ class MultiReadModel(ReadModel):
                     for index, id in enumerate(ids):
                         if id==sep_token_id:
                             pooled_output = self.sep_pooler(sequence_output[b,index,:].unsqueeze(0)) #[1, hdim]
+                            pooled_output = self.activation(pooled_output)
+                            pooled_output = self.dropout(pooled_output)
                             logit_bi = self.binary_classifier(pooled_output) # [1,1]
                             logits_bi = torch.cat((logits_bi, logit_bi), dim=0)
                             break
             assert len(logits_bi) == len(sequence_output)  #[Batch, 1]
+            # logits_bi = self.sep_pooler(sequence_output[:,0,:])
+            # logits_bi = self.binary_classifier(logits_bi)
                             
             if self.model_type != 'big_bird':
-                logits = self.qa_outputs(sequence_output)   # [batch, seq_len, 2]
+                logits = self.pooler(sequence_output)
+                logits = self.activation(logits)
+                logits = self.dropout(logits)
+                logits = self.qa_outputs(logits)   # [batch, seq_len, 2]
             else:
-                logits = self.classifier(sequence_output) if self.classifier is not None else self.qa_classifier(sequence_output)
+                logits = self.pooler(sequence_output)
+                logits = self.activation(logits)
+                logits = self.dropout(logits)
+                logits = self.classifier(logits) if self.classifier is not None else self.qa_classifier(logits)
             start_logits, end_logits = logits.split(1, dim=-1)  
             start_logits = start_logits.squeeze(-1).contiguous()  # [batch, seq_len]
             end_logits = end_logits.squeeze(-1).contiguous() # [batch, seq_len]

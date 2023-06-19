@@ -87,16 +87,19 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = ReadModel.from_pretrained(
+    model = MultiReadModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         tokenizer=tokenizer,
     )
 
+    tokenizer_ret = BertTokenizerFast.from_pretrained(
+        'KoichiYasuoka/roberta-base-korean-morph-upos'
+    )
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_retrieval(
-            tokenizer.tokenize,
+            tokenizer_ret.tokenize,
             datasets,
             cfg,
             training_args,
@@ -236,7 +239,7 @@ def run_mrc(
     # flag가 True이면 이미 max length로 padding된 상태입니다.
     # 그렇지 않다면 data collator에서 padding을 진행해야합니다.
     data_collator = DataCollatorWithPadding(
-        tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None
+        tokenizer, pad_to_multiple_of=max_seq_length
     )
 
     # Post-processing:
