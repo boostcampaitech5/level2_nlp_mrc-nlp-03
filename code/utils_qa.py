@@ -272,8 +272,8 @@ def postprocess_qa_predictions(
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
         all_nbest_json[example["id"]] = [ {
                 'labels': example['answers']['text'][0]
-            } if 'answers' in example.keys() else {}
-            ]
+            } 
+            ] if 'answers' in example.keys() else []
         all_nbest_json[example["id"]].extend([
             {
                 k: (

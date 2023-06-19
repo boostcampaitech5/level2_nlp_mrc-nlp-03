@@ -3,8 +3,8 @@ import os
 import sys
 
 from arguments import DataTrainingArguments, ModelArguments
-from datasets import DatasetDict, load_from_disk
-from models import ReadModel
+from datasets import DatasetDict, load_from_disk, concatenate_datasets, load_dataset
+from models import ReadModel, MultiReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -28,35 +28,40 @@ import wandb
 from utils_viewer import eval_df2html
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-os.environ['TOKENIZERS_PARALLELISM'] = "false"
-os.environ['WANDB_SILENT']="true"
-os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = "true"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["WANDB_SILENT"] = "true"
+os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "true"
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base="1.3",config_path="../configs",config_name="train")
+
+@hydra.main(version_base="1.3", config_path="../configs", config_name="train")
 def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
-    
 
     # Argument 정의된 dataclass들을 instantiate
-    model_args=ModelArguments(**cfg.get("model"))
-    data_args=DataTrainingArguments(**cfg.get("data"))
-    training_args=TrainingArguments(**cfg.get("trainer"))
+    model_args = ModelArguments(**cfg.get("model"))
+    data_args = DataTrainingArguments(**cfg.get("data"))
+    training_args = TrainingArguments(**cfg.get("trainer"))
 
     dirs = os.listdir(training_args.output_dir)
-    for dir in dirs: # 빈 디렉토리 삭제
+    for dir in dirs:  # 빈 디렉토리 삭제
         path = os.path.join(training_args.output_dir, dir)
         if not os.path.exists(path):
             os.rmdir(path)
-    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
-    training_args.run_name=run_name
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d_%H:%M:%S")
+    training_args.run_name = run_name
     training_args.output_dir = os.path.join(training_args.output_dir, run_name)
-    wandb.init(project='MRC',
-               entity=None,
-               name=run_name)
-    
+    wandb.init(project="MRC", entity=None, name=run_name)
+    wandb.config.update(
+        {
+            "data_path": data_args.dataset_name,
+            "max_seq_length": data_args.max_seq_length,
+            "doc_stride": data_args.doc_stride,
+        }
+    )
 
     print(model_args.model_name_or_path)
     print(f"model is from {model_args.model_name_or_path}")
@@ -74,8 +79,11 @@ def main(cfg: DictConfig):
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
+    if os.path.exists(data_args.dataset_name):
+        datasets = load_from_disk(data_args.dataset_name)
+    else:
+        datasets = load_dataset(data_args.dataset_name)
 
-    datasets = load_from_disk(data_args.dataset_name)
     print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
@@ -91,24 +99,26 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = ReadModel.from_pretrained(
+    model = MultiReadModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
+        tokenizer=tokenizer,
     )
 
-    print(
-        type(training_args),
-        type(model_args),
-        type(datasets),
-        type(tokenizer),
-        type(model),
-    )
+    # print(
+    #     type(training_args),
+    #     type(model_args),
+    #     type(datasets),
+    #     type(tokenizer),
+    #     type(model),
+    # )
 
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
     wandb.finish()
+
 
 def run_mrc(
     data_args: DataTrainingArguments,
@@ -118,7 +128,6 @@ def run_mrc(
     tokenizer,
     model,
 ) -> None:
-
     # dataset을 전처리합니다.
     # training과 evaluation에서 사용되는 전처리는 아주 조금 다른 형태를 가집니다.
     if training_args.do_train:
@@ -138,6 +147,7 @@ def run_mrc(
     last_checkpoint, max_seq_length = check_no_error(
         data_args, training_args, datasets, tokenizer
     )
+    print(f"MAX_LENGTH: {max_seq_length}")
 
     # Train preprocessing / 전처리를 진행합니다.
     def prepare_train_features(examples):
@@ -153,7 +163,9 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False if 'roberta' in model_args.model_name_or_path else True,
+            return_token_type_ids=False
+            if "roberta" in model_args.model_name_or_path
+            else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -198,7 +210,10 @@ def run_mrc(
                     token_end_index -= 1
 
                 # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
-                if not (
+                if start_char == 0 and end_char == 0:
+                    tokenized_examples["start_positions"].append(cls_index)
+                    tokenized_examples["end_positions"].append(cls_index)
+                elif not (
                     offsets[token_start_index][0] <= start_char
                     and offsets[token_end_index][1] >= end_char
                 ):
@@ -209,13 +224,13 @@ def run_mrc(
                     # Note: answer가 마지막 단어인 경우 last offset을 따라갈 수 있습니다(edge case).
                     while (
                         token_start_index < len(offsets)
-                        and offsets[token_start_index][0] <= start_char
+                        and offsets[token_start_index][0] < start_char
                     ):
                         token_start_index += 1
-                    tokenized_examples["start_positions"].append(token_start_index - 1)
-                    while offsets[token_end_index][1] >= end_char:
+                    tokenized_examples["start_positions"].append(token_start_index)
+                    while offsets[token_end_index][1] > end_char:
                         token_end_index -= 1
-                    tokenized_examples["end_positions"].append(token_end_index + 1)
+                    tokenized_examples["end_positions"].append(token_end_index)
 
         return tokenized_examples
 
@@ -224,8 +239,7 @@ def run_mrc(
             raise ValueError("--do_train requires a train dataset")
         train_dataset = datasets["train"]
 
-        # preporcessing dataset
-
+        b = len(train_dataset)
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
             prepare_train_features,
@@ -234,6 +248,7 @@ def run_mrc(
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
+        print(f"Train Examples {b} -> {len(train_dataset)}")
 
     # Validation preprocessing
     def prepare_validation_features(examples):
@@ -248,7 +263,9 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False if 'roberta' in model_args.model_name_or_path else True,
+            return_token_type_ids=False
+            if "roberta" in model_args.model_name_or_path
+            else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -277,7 +294,7 @@ def run_mrc(
 
     if training_args.do_eval:
         eval_dataset = datasets["validation"]
-
+        b = len(eval_dataset)
         # Validation Feature 생성
         eval_dataset = eval_dataset.map(
             prepare_validation_features,
@@ -286,19 +303,23 @@ def run_mrc(
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
-
+        print(f"Examples {b} -> {len(eval_dataset)}")
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
     # 그렇지 않다면 data collator에서 padding을 진행해야합니다.
     data_collator = DataCollatorWithPadding(
-        tokenizer,
-        pad_to_multiple_of=8 if training_args.fp16 else None
+        tokenizer, pad_to_multiple_of=max_seq_length
     )
 
     # Post-processing:
     def post_processing_function(examples, features, predictions, training_args):
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
-        predictions, start_prediction_pos, context, question = postprocess_qa_predictions(
+        (
+            predictions,
+            start_prediction_pos,
+            context,
+            question,
+        ) = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
@@ -318,9 +339,12 @@ def run_mrc(
             for ex in datasets["validation"]
         ]
 
-        return EvalPrediction(
-            predictions=formatted_predictions, label_ids=references
-        ), start_prediction_pos, context, question
+        return (
+            EvalPrediction(predictions=formatted_predictions, label_ids=references),
+            start_prediction_pos,
+            context,
+            question,
+        )
 
     metric = evaluate.load("squad")
 
@@ -348,7 +372,7 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=None)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
@@ -380,9 +404,10 @@ def run_mrc(
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-        csv_path=os.path.join(training_args.output_dir, "eval_results.csv")
+        csv_path = os.path.join(training_args.output_dir, "eval_results.csv")
         eval_preds.to_csv(csv_path, index=False)
         eval_df2html(csv_path)
+
 
 if __name__ == "__main__":
     main()
