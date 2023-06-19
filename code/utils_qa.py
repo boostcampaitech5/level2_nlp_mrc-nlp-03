@@ -138,6 +138,8 @@ def postprocess_qa_predictions(
             end_logits = all_end_logits[feature_index]
             # logit과 original context의 logit을 mapping합니다.
             offset_mapping = features[feature_index]["offset_mapping"]
+            # 각 feature가 몇 번 context를 가리키고 있는지 mapping합니다.
+            context_index = features[feature_index]["context_index"]
             # Optional : `token_is_max_context`, 제공되는 경우 현재 기능에서 사용할 수 있는 max context가 없는 answer를 제거합니다
             token_is_max_context = features[feature_index].get(
                 "token_is_max_context", None
@@ -194,6 +196,7 @@ def postprocess_qa_predictions(
                             "score": start_logits[start_index] + end_logits[end_index],
                             "start_logit": start_logits[start_index],
                             "end_logit": end_logits[end_index],
+                            "context_index": context_index,
                         }
                     )
 
@@ -218,15 +221,21 @@ def postprocess_qa_predictions(
         for pred in predictions:
             offsets = pred.pop("offsets")
             pred["prediction_start"] = offsets[0]
-            pred["text"] = context[offsets[0] : offsets[1]]
+            pred["text"] = context[pred["context_index"]][offsets[0] : offsets[1]]
 
         # rare edge case에는 null이 아닌 예측이 하나도 없으며 failure를 피하기 위해 fake prediction을 만듭니다.
         if len(predictions) == 0 or (
             len(predictions) == 1 and predictions[0]["text"] == ""
         ):
-
             predictions.insert(
-                0, {"text": "empty", "start_logit": 0.0, "end_logit": 0.0, "score": 0.0, "prediction_start":0}
+                0,
+                {
+                    "text": "empty",
+                    "start_logit": 0.0,
+                    "end_logit": 0.0,
+                    "score": 0.0,
+                    "prediction_start": 0,
+                },
             )
 
         # 모든 점수의 소프트맥스를 계산합니다(we do it with numpy to stay independent from torch/tf in this file, using the LogSumExp trick).
@@ -240,10 +249,10 @@ def postprocess_qa_predictions(
 
         # best prediction을 선택합니다.
         if not version_2_with_negative:
-            if 'answers' in example.keys():
-                all_predictions[example["id"]] ={
+            if "answers" in example.keys():
+                all_predictions[example["id"]] = {
                     "pred": predictions[0]["text"],
-                    "label": example["answers"]["text"][0]
+                    "label": example["answers"]["text"][0],
                 }
             else:
                 all_predictions[example["id"]] = predictions[0]["text"]
@@ -264,27 +273,32 @@ def postprocess_qa_predictions(
             scores_diff_json[example["id"]] = float(score_diff)  # JSON-serializable 가능
             if score_diff > null_score_diff_threshold:
                 all_predictions[example["id"]] = ""
-                prediction_start_pos[example["id"]]=0
+                prediction_start_pos[example["id"]] = 0
             else:
                 all_predictions[example["id"]] = best_non_null_pred["text"]
-                prediction_start_pos[example["id"]]=best_non_null_pred['prediction_start']
+                prediction_start_pos[example["id"]] = best_non_null_pred[
+                    "prediction_start"
+                ]
 
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
-        all_nbest_json[example["id"]] = [ {
-                'labels': example['answers']['text'][0]
-            } if 'answers' in example.keys() else {}
+        all_nbest_json[example["id"]] = [
+            {"labels": example["answers"]["text"][0]}
+            if "answers" in example.keys()
+            else {}
+        ]
+        all_nbest_json[example["id"]].extend(
+            [
+                {
+                    k: (
+                        float(v)
+                        if isinstance(v, (np.float16, np.float32, np.float64))
+                        else v
+                    )
+                    for k, v in pred.items()
+                }
+                for pred in predictions
             ]
-        all_nbest_json[example["id"]].extend([
-            {
-                k: (
-                    float(v)
-                    if isinstance(v, (np.float16, np.float32, np.float64))
-                    else v
-                )
-                for k, v in pred.items()
-            }
-            for pred in predictions
-        ])
+        )
 
     # output_dir이 있으면 모든 dicts를 저장합니다.
     if output_dir is not None:
@@ -324,8 +338,13 @@ def postprocess_qa_predictions(
                 )
 
     if isinstance(list(all_predictions.values())[0], dict):
-        all_predictions = {key:value["pred"] for key, value in all_predictions.items()}
-    return all_predictions, prediction_start_pos, examples['context'], examples['question']
+        all_predictions = {key: value["pred"] for key, value in all_predictions.items()}
+    return (
+        all_predictions,
+        prediction_start_pos,
+        examples["context"],
+        examples["question"],
+    )
 
 
 def check_no_error(
@@ -334,7 +353,6 @@ def check_no_error(
     datasets: DatasetDict,
     tokenizer,
 ) -> Tuple[Any, int]:
-
     # last checkpoint 찾기.
     last_checkpoint = None
     if (

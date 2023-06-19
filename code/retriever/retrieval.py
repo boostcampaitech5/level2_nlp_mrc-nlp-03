@@ -142,6 +142,7 @@ class _BaseRetriever:
                     "question": example["question"],
                     "id": example["id"],
                     # Retrieve한 Passage의 id, context를 반환합니다.
+                    "title": [self.wiki_df["title"][pid] for pid in doc_indeces[idx]],
                     "context": [self.wiki_df["text"][pid] for pid in doc_indeces[idx]],
                     "document_id": [
                         self.wiki_df["document_id"][pid] for pid in doc_indeces[idx]
@@ -700,7 +701,7 @@ def get_args():
     )
     parser.add_argument(
         "--tokenizer_name",
-        default="klue/roberta-base",
+        default="KoichiYasuoka/roberta-base-korean-morph-upos",
         type=str,
         help="Name of pretrained tokenizer for sparse retriever",
     )

@@ -155,9 +155,7 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False
-            if "roberta" in model_args.model_name_or_path
-            else True,
+            return_token_type_ids=False if "roberta" in model.model_type else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 

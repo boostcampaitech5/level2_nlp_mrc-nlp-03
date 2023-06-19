@@ -102,6 +102,22 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
+    tokenizer_for_retriever: str = field(
+        default=None,
+        metadata={"help": "sparse retriever의 embedding을 만들 때 사용할 tokenizer"},
+    )
+    no_other_languages: bool = field(
+        default=False,
+        metadata={
+            "help": "retriever의 preprocessing을 수행할 때 한국어, 영어를 제외한 다른 언어를 제거할 것인지"
+        },
+    )
+    quoat_normalize: bool = field(
+        default=False,
+        metadata={
+            "help": "retriever의 preprocessing을 수행할 때 \"와 '를 제외한 따옴표를 모두 '로 통일할 것인지"
+        },
+    )
 
 
 if __name__ == "__main__":
