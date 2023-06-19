@@ -29,6 +29,7 @@ if is_torch_tpu_available():
     import torch_xla.core.xla_model as xm
     import torch_xla.debug.metrics as met
 
+
 # Huggingface의 Trainer를 상속받아 QuestionAnswering을 위한 Trainer를 생성합니다.
 class QuestionAnsweringTrainer(Trainer):
     def __init__(self, *args, eval_examples=None, post_process_function=None, **kwargs):
@@ -38,8 +39,8 @@ class QuestionAnsweringTrainer(Trainer):
 
     def evaluate(self, eval_dataset=None, eval_examples=None, ignore_keys=None):
         eval_dataset = self.eval_dataset if eval_dataset is None else eval_dataset
-        if 'token_type_ids' in eval_dataset.column_names:
-            eval_dataset = eval_dataset.remove_columns('token_type_ids')
+        if "token_type_ids" in eval_dataset.column_names:
+            eval_dataset = eval_dataset.remove_columns("token_type_ids")
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         eval_examples = self.eval_examples if eval_examples is None else eval_examples
 
@@ -58,17 +59,19 @@ class QuestionAnsweringTrainer(Trainer):
             model = self.model
             model.eval()
             start_logits, end_logits = [], []
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            for i, samples in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader), desc='evaluate'):
-                input_ids = samples['input_ids'].to(device)
-                attention_mask = samples['attention_mask'].to(device)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            for i, samples in tqdm(
+                enumerate(eval_dataloader), total=len(eval_dataloader), desc="evaluate"
+            ):
+                input_ids = samples["input_ids"].to(device)
+                attention_mask = samples["attention_mask"].to(device)
                 output = model(input_ids=input_ids, attention_mask=attention_mask)
-                start_logits.append(output['start_logits'].detach().cpu())
-                end_logits.append(output['end_logits'].detach().cpu())
+                start_logits.append(output["start_logits"].detach().cpu())
+                end_logits.append(output["end_logits"].detach().cpu())
                 torch.cuda.empty_cache()
             start_logits = torch.concat(start_logits)
             end_logits = torch.concat(end_logits)
-            output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
+            output = {"predictions": (start_logits.numpy(), end_logits.numpy())}
         finally:
             self.compute_metrics = compute_metrics
 
@@ -79,8 +82,13 @@ class QuestionAnsweringTrainer(Trainer):
             )
 
         if self.post_process_function is not None and self.compute_metrics is not None:
-            eval_preds, prediction_start_pos, context, question = self.post_process_function(
-                eval_examples, eval_dataset, output['predictions'], self.args
+            (
+                eval_preds,
+                prediction_start_pos,
+                context,
+                question,
+            ) = self.post_process_function(
+                eval_examples, eval_dataset, output["predictions"], self.args
             )
             metrics = self.compute_metrics(eval_preds)
 
@@ -102,25 +110,26 @@ class QuestionAnsweringTrainer(Trainer):
             prediction_text = pd.DataFrame(prediction_text)
             prediction_start_pos = pd.DataFrame(prediction_start_pos)
             # prediction_start_pos=pd.DataFrame(prediction_start_pos.items(), columns=['id','prediction_start'])
-            prediction=pd.merge(prediction_text, prediction_start_pos,on='id')
-            
-            answer = pd.DataFrame(answer)
-            answer = answer['answers'].apply(pd.Series)
-            answer['answer_start']=answer['answer_start'].apply(lambda x : x[0]).astype('int32')
-            answer['answer_text']=answer['text'].apply(lambda x : x[0])
-            answer=answer[['answer_start','answer_text']]
+            prediction = pd.merge(prediction_text, prediction_start_pos, on="id")
 
-            context = pd.DataFrame({"context":context})
-            question = pd.DataFrame({"question":question})
+            answer = pd.DataFrame(answer)
+            answer = answer["answers"].apply(pd.Series)
+            answer["answer_start"] = (
+                answer["answer_start"].apply(lambda x: x[0]).astype("int32")
+            )
+            answer["answer_text"] = answer["text"].apply(lambda x: x[0])
+            answer = answer[["answer_start", "answer_text"]]
+
+            context = pd.DataFrame({"context": context})
+            question = pd.DataFrame({"question": question})
 
             eval_preds = pd.concat([prediction, answer, context, question], axis=1)
         return metrics, eval_preds
 
     def predict(self, test_dataset, test_examples, ignore_keys=None):
-        if 'token_type_ids' in test_dataset.column_names:
-            test_dataset = test_dataset.remove_columns('token_type_ids')
+        if "token_type_ids" in test_dataset.column_names:
+            test_dataset = test_dataset.remove_columns("token_type_ids")
         test_dataloader = self.get_test_dataloader(test_dataset)
-
 
         # 일시적으로 metric computation를 불가능하게 한 상태이며, 해당 코드에서는 loop 내에서 metric 계산을 수행합니다.
         compute_metrics = self.compute_metrics
@@ -138,17 +147,19 @@ class QuestionAnsweringTrainer(Trainer):
             model = self.model
             model.eval()
             start_logits, end_logits = [], []
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            for i, samples in tqdm(enumerate(test_dataloader), total=len(test_dataloader), desc='predict'):
-                input_ids = samples['input_ids'].to(device)
-                attention_mask = samples['attention_mask'].to(device)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            for i, samples in tqdm(
+                enumerate(test_dataloader), total=len(test_dataloader), desc="predict"
+            ):
+                input_ids = samples["input_ids"].to(device)
+                attention_mask = samples["attention_mask"].to(device)
                 output = model(input_ids=input_ids, attention_mask=attention_mask)
-                start_logits.append(output['start_logits'].detach().cpu())
-                end_logits.append(output['end_logits'].detach().cpu())
+                start_logits.append(output["start_logits"].detach().cpu())
+                end_logits.append(output["end_logits"].detach().cpu())
                 torch.cuda.empty_cache()
             start_logits = torch.concat(start_logits)
             end_logits = torch.concat(end_logits)
-            output = {'predictions':(start_logits.numpy(), end_logits.numpy())}
+            output = {"predictions": (start_logits.numpy(), end_logits.numpy())}
         finally:
             self.compute_metrics = compute_metrics
 
@@ -161,14 +172,19 @@ class QuestionAnsweringTrainer(Trainer):
                 columns=list(test_dataset.features.keys()),
             )
 
-        predictions, start_prediction_pos, context, question = self.post_process_function(
-            test_examples, test_dataset, output['predictions'], self.args
+        (
+            predictions,
+            start_prediction_pos,
+            context,
+            question,
+        ) = self.post_process_function(
+            test_examples, test_dataset, output["predictions"], self.args
         )
         predictions = pd.DataFrame(predictions)
         start_prediction_pos = pd.DataFrame(start_prediction_pos)
-        context = pd.DataFrame({"context":context})
-        question = pd.DataFrame({"question":question})
-        
-        predictions = pd.merge(predictions, start_prediction_pos,on='id')
+        context = pd.DataFrame({"context": context})
+        question = pd.DataFrame({"question": question})
+
+        predictions = pd.merge(predictions, start_prediction_pos, on="id")
         predictions = pd.concat([predictions, question, context], axis=1)
         return predictions

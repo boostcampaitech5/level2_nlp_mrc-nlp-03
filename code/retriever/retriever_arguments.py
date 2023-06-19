@@ -66,6 +66,10 @@ class DataTrainingArguments:
             "than this will be truncated, sequences shorter will be padded."
         },
     )
+    num_hard_negatives: int = field(
+        default=1,
+        metadata={"help": "The number of hard negatives"},
+    )
     eval_retrieval: bool = field(
         default=True,
         metadata={"help": "Whether to run passage retrieval using sparse embedding."},

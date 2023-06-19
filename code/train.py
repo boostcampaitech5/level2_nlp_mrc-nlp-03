@@ -48,7 +48,7 @@ def main(cfg: DictConfig):
     dirs = os.listdir(training_args.output_dir)
     for dir in dirs: # 빈 디렉토리 삭제
         path = os.path.join(training_args.output_dir, dir)
-        if not os.listdir(path):
+        if not os.path.exists(path):
             os.rmdir(path)
     run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
     training_args.run_name=run_name
@@ -223,6 +223,8 @@ def run_mrc(
         if "train" not in datasets:
             raise ValueError("--do_train requires a train dataset")
         train_dataset = datasets["train"]
+
+        # preporcessing dataset
 
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
