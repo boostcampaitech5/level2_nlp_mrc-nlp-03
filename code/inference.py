@@ -8,7 +8,8 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import logging
 import sys, os
 from typing import Callable, Dict, List, Tuple
-sys.path.append('code/retriever')
+
+sys.path.append("code/retriever")
 import numpy as np
 from models import ReadModel
 from arguments import DataTrainingArguments, ModelArguments
@@ -45,9 +46,8 @@ def main(cfg: DictConfig):
     model_args = ModelArguments(**cfg.get("model"))
     data_args = DataTrainingArguments(**cfg.get("data"))
     training_args = TrainingArguments(**cfg.get("trainer"))
-    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d_%H:%M:%S")
     training_args.output_dir = os.path.join(training_args.output_dir, run_name)
-    
 
     # training_args.do_train = True
 
@@ -119,7 +119,7 @@ def run_retrieval(
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-    df['context'] = df['context'].map(lambda x: ' '.join(x))
+    df["context"] = df["context"].map(lambda x: " ".join(x))
 
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
@@ -130,7 +130,7 @@ def run_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
-        df=df[['context','id','question']]
+        df = df[["context", "id", "question"]]
 
     # train data 에 대해선 정답이 존재하므로 id question context answer 로 데이터셋이 구성됩니다.
     elif training_args.do_eval:
@@ -149,7 +149,7 @@ def run_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
-        df=df[['answers','context','id','question']]
+        df = df[["answers", "context", "id", "question"]]
     datasets = DatasetDict({"validation": Dataset.from_pandas(df, features=f)})
     return datasets
 
@@ -245,7 +245,12 @@ def run_mrc(
         training_args: TrainingArguments,
     ) -> EvalPrediction:
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
-        predictions, start_prediction_pos, context, question = postprocess_qa_predictions(
+        (
+            predictions,
+            start_prediction_pos,
+            context,
+            question,
+        ) = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
@@ -260,7 +265,7 @@ def run_mrc(
         start_prediction_pos = [
             {"id": k, "prediction_start": v} for k, v in start_prediction_pos.items()
         ]
-        
+
         return formatted_predictions, start_prediction_pos, context, question
 
     metric = evaluate.load("squad")
@@ -295,7 +300,7 @@ def run_mrc(
             "No metric can be presented because there is no correct answer given. Job done!"
         )
 
-        csv_path=os.path.join(training_args.output_dir, "pred_results.csv")
+        csv_path = os.path.join(training_args.output_dir, "pred_results.csv")
         prediction_results.to_csv(csv_path, index=False)
         pred_df2html(csv_path)
 
