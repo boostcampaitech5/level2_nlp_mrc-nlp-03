@@ -724,6 +724,7 @@ def get_args():
         type=str,
         help="훈련된 DPR 모델의 output 경로",
     )
+    parser.add_argument("--with_new_vocab", default=False, type=bool, help="")
 
     args = parser.parse_args()
     return args
@@ -742,6 +743,14 @@ if __name__ == "__main__":
         args.tokenizer_name,
         use_fast=False,
     )
+    
+    # answer에 등장하는 명사 token을 vocab에 추가해줍니다
+    if args.with_new_vocab: 
+        new_vocab_path = "/opt/ml/input/level2_nlp_mrc-nlp-03-1/code/retriever/new_vocab.txt"
+        with open(new_vocab_path, "r") as file:
+            new_vocab = file.readline()
+        new_vocab = new_vocab.split()
+        for word in new_vocab: tokenizer.add_tokens(word)
 
     preprocessor = Preprocessor(no_other_languages=False, quoat_normalize=True)
 
