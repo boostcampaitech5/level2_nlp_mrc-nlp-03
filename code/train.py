@@ -3,8 +3,8 @@ import os
 import sys
 
 from arguments import DataTrainingArguments, ModelArguments
-from datasets import DatasetDict, load_from_disk
-from models import ReadModel
+from datasets import DatasetDict, load_from_disk, concatenate_datasets, load_dataset
+from models import ReadModel, MultiReadModel
 import evaluate
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
@@ -55,6 +55,13 @@ def main(cfg: DictConfig):
     training_args.run_name = run_name
     training_args.output_dir = os.path.join(training_args.output_dir, run_name)
     wandb.init(project="MRC", entity=None, name=run_name)
+    wandb.config.update(
+        {
+            "data_path": data_args.dataset_name,
+            "max_seq_length": data_args.max_seq_length,
+            "doc_stride": data_args.doc_stride,
+        }
+    )
 
     print(model_args.model_name_or_path)
     print(f"model is from {model_args.model_name_or_path}")
@@ -72,8 +79,11 @@ def main(cfg: DictConfig):
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
+    if os.path.exists(data_args.dataset_name):
+        datasets = load_from_disk(data_args.dataset_name)
+    else:
+        datasets = load_dataset(data_args.dataset_name)
 
-    datasets = load_from_disk(data_args.dataset_name)
     print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.
@@ -89,18 +99,19 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = ReadModel.from_pretrained(
+    model = MultiReadModel.from_pretrained(
         model_args.model_name_or_path,
         config=config,
+        tokenizer=tokenizer,
     )
 
-    print(
-        type(training_args),
-        type(model_args),
-        type(datasets),
-        type(tokenizer),
-        type(model),
-    )
+    # print(
+    #     type(training_args),
+    #     type(model_args),
+    #     type(datasets),
+    #     type(tokenizer),
+    #     type(model),
+    # )
 
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
@@ -133,6 +144,7 @@ def run_mrc(
     last_checkpoint, max_seq_length = check_no_error(
         data_args, training_args, datasets, tokenizer
     )
+    print(f"MAX_LENGTH: {max_seq_length}")
 
     # Train preprocessing / 전처리를 진행합니다.
     def prepare_train_features(examples):
@@ -200,7 +212,10 @@ def run_mrc(
                     token_end_index -= 1
 
                 # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
-                if not (
+                if start_char == 0 and end_char == 0:
+                    tokenized_examples["start_positions"].append(cls_index)
+                    tokenized_examples["end_positions"].append(cls_index)
+                elif not (
                     offsets[token_start_index][0] <= start_char
                     and offsets[token_end_index][1] >= end_char
                 ):
@@ -242,6 +257,29 @@ def run_mrc(
                 tokenized_examples["start_positions"][i] -= 1
                 tokenized_examples["end_positions"][i] -= 1
 
+            if data_args.add_title:
+                # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
+                # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
+                sep_token_indeces = []
+                for idx, id in enumerate(input_ids):
+                    if id == tokenizer.sep_token_id:
+                        sep_token_indeces.append(idx)
+
+                assert (
+                    len(sep_token_indeces) == 3
+                ), "title을 추가하는데 문제가 발생했습니다. 예기치 못한 학습이 이루어질 수 있으니 보고 바랍니다."
+
+                if "token_type_ids" in tokenized_examples.keys():
+                    for idx in range(sep_token_indeces[0] + 1, sep_token_indeces[1]):
+                        tokenized_examples["token_type_ids"][i][idx] = 1
+
+                    del tokenized_examples["token_type_ids"][i][sep_token_indeces[1]]
+
+                del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
+                del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
+                tokenized_examples["start_positions"][i] -= 1
+                tokenized_examples["end_positions"][i] -= 1
+
         return tokenized_examples
 
     if training_args.do_train:
@@ -249,8 +287,7 @@ def run_mrc(
             raise ValueError("--do_train requires a train dataset")
         train_dataset = datasets["train"]
 
-        # preporcessing dataset
-
+        b = len(train_dataset)
         # dataset에서 train feature를 생성합니다.
         train_dataset = train_dataset.map(
             prepare_train_features,
@@ -259,6 +296,7 @@ def run_mrc(
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
+        print(f"Train Examples {b} -> {len(train_dataset)}")
 
     # Validation preprocessing
     def prepare_validation_features(examples):
@@ -281,7 +319,7 @@ def run_mrc(
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             return_token_type_ids=False
-            if "roberta" in model_args.model_name_or_path
+            if "roberta" in model.model_type
             else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
@@ -334,7 +372,7 @@ def run_mrc(
 
     if training_args.do_eval:
         eval_dataset = datasets["validation"]
-
+        b = len(eval_dataset)
         # Validation Feature 생성
         eval_dataset = eval_dataset.map(
             prepare_validation_features,
@@ -343,12 +381,12 @@ def run_mrc(
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
-
+        print(f"Examples {b} -> {len(eval_dataset)}")
     # Data collator
     # flag가 True이면 이미 max length로 padding된 상태입니다.
     # 그렇지 않다면 data collator에서 padding을 진행해야합니다.
     data_collator = DataCollatorWithPadding(
-        tokenizer, pad_to_multiple_of=8 if training_args.fp16 else None
+        tokenizer, pad_to_multiple_of=max_seq_length
     )
 
     # Post-processing:
@@ -412,7 +450,7 @@ def run_mrc(
             checkpoint = model_args.model_name_or_path
         else:
             checkpoint = None
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=None)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics

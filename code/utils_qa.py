@@ -281,24 +281,21 @@ def postprocess_qa_predictions(
                 ]
 
         # np.float를 다시 float로 casting -> `predictions`은 JSON-serializable 가능
-        all_nbest_json[example["id"]] = [
-            {"labels": example["answers"]["text"][0]}
-            if "answers" in example.keys()
-            else {}
-        ]
-        all_nbest_json[example["id"]].extend(
-            [
-                {
-                    k: (
-                        float(v)
-                        if isinstance(v, (np.float16, np.float32, np.float64))
-                        else v
-                    )
-                    for k, v in pred.items()
-                }
-                for pred in predictions
-            ]
-        )
+        all_nbest_json[example["id"]] = [ {
+                "labels": example["answers"]["text"][0]
+            } 
+            ] if "answers" in example.keys() else []
+        all_nbest_json[example["id"]].extend([
+            {
+                k: (
+                    float(v)
+                    if isinstance(v, (np.float16, np.float32, np.float64))
+                    else v
+                )
+                for k, v in pred.items()
+            }
+            for pred in predictions
+        ])
 
     # output_dir이 있으면 모든 dicts를 저장합니다.
     if output_dir is not None:

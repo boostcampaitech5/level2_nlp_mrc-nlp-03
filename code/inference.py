@@ -12,7 +12,7 @@ from collections import defaultdict
 
 sys.path.append("code/retriever")
 import numpy as np
-from models import ReadModel
+from models import ReadModel, MultiReadModel
 from arguments import DataTrainingArguments, ModelArguments
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, load_from_disk
 from datetime import datetime, timedelta, timezone
@@ -86,9 +86,8 @@ def main(cfg: DictConfig):
         else model_args.model_name_or_path,
         use_fast=True,
     )
-    model = ReadModel.from_pretrained(
+    model = MultiReadModel.from_pretrained(
         model_args.model_name_or_path,
-        # from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
     )
     tokenizer_for_retriever = AutoTokenizer.from_pretrained(
@@ -100,6 +99,9 @@ def main(cfg: DictConfig):
         quoat_normalize=data_args.quoat_normalize,
     )
 
+    tokenizer_ret = BertTokenizerFast.from_pretrained(
+        "KoichiYasuoka/roberta-base-korean-morph-upos"
+    )
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
         datasets = run_retrieval(

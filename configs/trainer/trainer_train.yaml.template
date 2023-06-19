@@ -2,8 +2,20 @@ output_dir: ./outputs/train_dataset
 do_train: true
 do_eval: true
 overwrite_output_dir: true
-run_name: null
-
-# test 용으로 짧게 실행할 경우 `num_train_epochs을` 주석처리하고 `max_steps`를 주석 해제
-num_train_epochs: 3
+report_to: 'wandb'
+per_device_train_batch_size: 8
+per_device_eval_batch_size: 4
+logging_strategy: 'steps'
+logging_steps: 50
+evaluation_strategy: 'epoch'
+# eval_steps: 15
+save_strategy: 'epoch'
+save_total_limit: 1
+learning_rate: 3e-5
+num_train_epochs: 6
 # max_steps: 10
+warmup_steps: 300
+# warmup_ratio: 0.1
+seed: 400
+dataloader_num_workers: 4
+logging_first_step: true
