@@ -2,3 +2,8 @@ output_dir: ./outputs/train_dataset
 do_train: true
 do_eval: true
 overwrite_output_dir: true
+run_name: null
+
+# test 용으로 짧게 실행할 경우 `num_train_epochs을` 주석처리하고 `max_steps`를 주석 해제
+num_train_epochs: 3
+# max_steps: 10

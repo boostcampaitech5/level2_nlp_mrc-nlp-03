@@ -8,7 +8,8 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import logging
 import sys, os
 from typing import Callable, Dict, List, Tuple
-sys.path.append('code/retriever')
+
+sys.path.append("code/retriever")
 import numpy as np
 from models import ReadModel
 from arguments import DataTrainingArguments, ModelArguments
@@ -31,6 +32,7 @@ from transformers import (
 from utils_qa import check_no_error, postprocess_qa_predictions
 import hydra
 from omegaconf import DictConfig
+from utils_viewer import pred_df2html
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +42,12 @@ def main(cfg: DictConfig):
     # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
     # --help flag 를 실행시켜서 확인할 수 도 있습니다.
 
-    # parser = HfArgumentParser(
-    #     (ModelArguments, DataTrainingArguments, TrainingArguments)
-    # )
-    # model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
     # Argument 정의된 dataclass들을 instanciate
     model_args = ModelArguments(**cfg.get("model"))
     data_args = DataTrainingArguments(**cfg.get("data"))
     training_args = TrainingArguments(**cfg.get("trainer"))
-    run_name = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d_%H:%M:%S')
+    run_name = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d_%H:%M:%S")
     training_args.output_dir = os.path.join(training_args.output_dir, run_name)
-    
 
     # training_args.do_train = True
 
@@ -83,7 +79,7 @@ def main(cfg: DictConfig):
     )
     tokenizer = BertTokenizerFast.from_pretrained(
         model_args.tokenizer_name
-        if model_args.tokenizer_name
+        if model_args.tokenizer_name is not None
         else model_args.model_name_or_path,
         use_fast=True,
     )
@@ -123,7 +119,7 @@ def run_retrieval(
 
     # Query에 맞는 Passage들을 Retrieval 합니다.
     df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-    df['context'] = df['context'].map(lambda x: ' '.join(x))
+    df["context"] = df["context"].map(lambda x: " ".join(x))
 
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
@@ -134,6 +130,7 @@ def run_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
+        df = df[["context", "id", "question"]]
 
     # train data 에 대해선 정답이 존재하므로 id question context answer 로 데이터셋이 구성됩니다.
     elif training_args.do_eval:
@@ -152,7 +149,7 @@ def run_retrieval(
                 "question": Value(dtype="string", id=None),
             }
         )
-    df = df[list(f)]
+        df = df[["answers", "context", "id", "question"]]
     datasets = DatasetDict({"validation": Dataset.from_pandas(df, features=f)})
     return datasets
 
@@ -248,29 +245,28 @@ def run_mrc(
         training_args: TrainingArguments,
     ) -> EvalPrediction:
         # Post-processing: start logits과 end logits을 original context의 정답과 match시킵니다.
-        predictions, start_prediction_pos, context = postprocess_qa_predictions(
+        (
+            predictions,
+            start_prediction_pos,
+            context,
+            question,
+        ) = postprocess_qa_predictions(
             examples=examples,
             features=features,
             predictions=predictions,
             max_answer_length=data_args.max_answer_length,
             output_dir=training_args.output_dir,
         )
+
         # Metric을 구할 수 있도록 Format을 맞춰줍니다.
         formatted_predictions = [
             {"id": k, "prediction_text": v} for k, v in predictions.items()
         ]
+        start_prediction_pos = [
+            {"id": k, "prediction_start": v} for k, v in start_prediction_pos.items()
+        ]
 
-        if training_args.do_predict:
-            return formatted_predictions
-        # elif training_args.do_eval:
-        #     references = [
-        #         {"id": ex["id"], "answers": ex[answer_column_name]}
-        #         for ex in datasets["validation"]
-        #     ]
-
-        #     return EvalPrediction(
-        #         predictions=formatted_predictions, label_ids=references
-        #     ), start_prediction_pos, context
+        return formatted_predictions, start_prediction_pos, context, question
 
     metric = evaluate.load("squad")
 
@@ -295,7 +291,7 @@ def run_mrc(
 
     #### eval dataset & eval example - predictions.json 생성됨
     if training_args.do_predict:
-        predictions = trainer.predict(
+        prediction_results = trainer.predict(
             test_dataset=eval_dataset, test_examples=datasets["validation"]
         )
 
@@ -303,6 +299,10 @@ def run_mrc(
         print(
             "No metric can be presented because there is no correct answer given. Job done!"
         )
+
+        csv_path = os.path.join(training_args.output_dir, "pred_results.csv")
+        prediction_results.to_csv(csv_path, index=False)
+        pred_df2html(csv_path)
 
     if training_args.do_eval:
         metrics, eval_preds = trainer.evaluate()
