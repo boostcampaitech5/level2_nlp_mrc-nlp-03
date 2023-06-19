@@ -1,3 +1,3 @@
-_target_: retriever.retrieval.TfidfRetriever
+_target_: retrieval.TfidfRetriever
 data_path: ./data/
 context_path: wikipedia_documents.json

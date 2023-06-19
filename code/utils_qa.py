@@ -325,7 +325,7 @@ def postprocess_qa_predictions(
 
     if isinstance(list(all_predictions.values())[0], dict):
         all_predictions = {key:value["pred"] for key, value in all_predictions.items()}
-    return all_predictions, prediction_start_pos, list(examples['context'])
+    return all_predictions, prediction_start_pos, examples['context'], examples['question']
 
 
 def check_no_error(
