@@ -257,28 +257,6 @@ def run_mrc(
                 tokenized_examples["start_positions"][i] -= 1
                 tokenized_examples["end_positions"][i] -= 1
 
-            if data_args.add_title:
-                # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
-                # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
-                sep_token_indeces = []
-                for idx, id in enumerate(input_ids):
-                    if id == tokenizer.sep_token_id:
-                        sep_token_indeces.append(idx)
-
-                assert (
-                    len(sep_token_indeces) == 3
-                ), "title을 추가하는데 문제가 발생했습니다. 예기치 못한 학습이 이루어질 수 있으니 보고 바랍니다."
-
-                if "token_type_ids" in tokenized_examples.keys():
-                    for idx in range(sep_token_indeces[0] + 1, sep_token_indeces[1]):
-                        tokenized_examples["token_type_ids"][i][idx] = 1
-
-                    del tokenized_examples["token_type_ids"][i][sep_token_indeces[1]]
-
-                del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
-                del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
-                tokenized_examples["start_positions"][i] -= 1
-                tokenized_examples["end_positions"][i] -= 1
 
         return tokenized_examples
 
