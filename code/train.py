@@ -233,8 +233,6 @@ def run_mrc(
                     while offsets[token_end_index][1] >= end_char:
                         token_end_index -= 1
                     tokenized_examples["end_positions"].append(token_end_index + 1)
-<<<<<<< HEAD
-=======
 
             if data_args.add_title:
                 # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
@@ -258,7 +256,6 @@ def run_mrc(
                 del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
                 tokenized_examples["start_positions"][i] -= 1
                 tokenized_examples["end_positions"][i] -= 1
->>>>>>> origin/feature/reader_add_title
 
         return tokenized_examples
 
