@@ -224,13 +224,13 @@ def run_mrc(
                     # Note: answer가 마지막 단어인 경우 last offset을 따라갈 수 있습니다(edge case).
                     while (
                         token_start_index < len(offsets)
-                        and offsets[token_start_index][0] < start_char
+                        and offsets[token_start_index][0] <= start_char
                     ):
                         token_start_index += 1
-                    tokenized_examples["start_positions"].append(token_start_index)
-                    while offsets[token_end_index][1] > end_char:
+                    tokenized_examples["start_positions"].append(token_start_index - 1)
+                    while offsets[token_end_index][1] >= end_char:
                         token_end_index -= 1
-                    tokenized_examples["end_positions"].append(token_end_index)
+                    tokenized_examples["end_positions"].append(token_end_index + 1)
 
         return tokenized_examples
 
