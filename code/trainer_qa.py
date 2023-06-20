@@ -91,7 +91,7 @@ class QuestionAnsweringTrainer(Trainer):
                 eval_examples, eval_dataset, output["predictions"], self.args
             )
             metrics = self.compute_metrics(eval_preds)
-
+            metrics = {f"eval_{k}": v for k, v in metrics.items()}
             self.log(metrics)
         else:
             metrics = {}

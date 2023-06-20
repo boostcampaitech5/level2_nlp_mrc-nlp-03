@@ -221,7 +221,7 @@ def run_mrc(
                     return_token_type_ids=False
                     if "roberta" in model.model_type
                     else True,
-                    padding="max_length" if data_args.pad_to_max_length else None,
+                    padding="max_length" if data_args.pad_to_max_length else False,
                 )
 
                 tokenized["example_id"] = [examples["id"][i]] * len(
