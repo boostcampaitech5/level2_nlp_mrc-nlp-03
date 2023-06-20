@@ -218,6 +218,10 @@ def postprocess_qa_predictions(
 
         # offset을 사용하여 original context에서 answer text를 수집합니다.
         context = example["context"]
+
+        # evaluation에서는 context가 하나의 string이므로 list로 감싸줍니다.
+        if isinstance(context, str):
+            context = [context]
         for pred in predictions:
             offsets = pred.pop("offsets")
             pred["prediction_start"] = offsets[0]

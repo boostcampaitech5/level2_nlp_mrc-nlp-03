@@ -243,11 +243,10 @@ def run_mrc(
             input_ids = tokenized_examples["input_ids"][i]
             # sequence id를 설정합니다 (to know what is the context and what is the question).
             sequence_ids = list_sequence_ids[i]
-            context_index = 1
 
             # Set to None the offset_mapping을 None으로 설정해서 token position이 context의 일부인지 쉽게 판별 할 수 있습니다.
             tokenized_examples["offset_mapping"][i] = [
-                (o if sequence_ids[k] == context_index else None)
+                (o if sequence_ids[k] == 1 else None)
                 for k, o in enumerate(tokenized_examples["offset_mapping"][i])
             ]
 

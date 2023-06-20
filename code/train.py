@@ -257,7 +257,6 @@ def run_mrc(
                 tokenized_examples["start_positions"][i] -= 1
                 tokenized_examples["end_positions"][i] -= 1
 
-
         return tokenized_examples
 
     if training_args.do_train:
@@ -296,9 +295,7 @@ def run_mrc(
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False
-            if "roberta" in model.model_type
-            else True,
+            return_token_type_ids=False if "roberta" in model.model_type else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -308,20 +305,21 @@ def run_mrc(
         # evaluation을 위해, prediction을 context의 substring으로 변환해야합니다.
         # corresponding example_id를 유지하고 offset mappings을 저장해야합니다.
         tokenized_examples["example_id"] = []
+        tokenized_examples["context_index"] = []
 
         for i in range(len(tokenized_examples["input_ids"])):
             input_ids = tokenized_examples["input_ids"][i]
             # sequence id를 설정합니다 (to know what is the context and what is the question).
             sequence_ids = tokenized_examples.sequence_ids(i)
-            context_index = 1
 
             # 하나의 example이 여러개의 span을 가질 수 있습니다.
             sample_index = sample_mapping[i]
             tokenized_examples["example_id"].append(examples["id"][sample_index])
+            tokenized_examples["context_index"].append(0)
 
             # Set to None the offset_mapping을 None으로 설정해서 token position이 context의 일부인지 쉽게 판별 할 수 있습니다.
             tokenized_examples["offset_mapping"][i] = [
-                (o if sequence_ids[k] == context_index else None)
+                (o if sequence_ids[k] == 1 else None)
                 for k, o in enumerate(tokenized_examples["offset_mapping"][i])
             ]
 
