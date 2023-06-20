@@ -5,7 +5,13 @@ max_seq_length: 384
 pad_to_max_length: true
 doc_stride: 128
 max_answer_length: 30
+add_title: true # true인 경우, 잘려진 passage마다 제목이 ^title^ passage 형태로 붙습니다.
 eval_retrieval: true
 num_clusters: 64
-top_k_retrieval: 10
-use_faiss: true
+top_k_retrieval: 20
+use_faiss: false
+
+# retriever 설정
+tokenizer_for_retriever: KoichiYasuoka/roberta-base-korean-morph-upos
+no_other_languages: false # 한글, 영어, 숫자, 특수문자 제외한 나머지 언어들을 삭제할 것인지
+quoat_normalize: true # ’‘“”와 같은 이상한 따옴표를 모두 '로 통일할 것인지

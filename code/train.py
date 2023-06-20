@@ -135,13 +135,10 @@ def run_mrc(
     else:
         column_names = datasets["validation"].column_names
 
-    question_column_name = "question" if "question" in column_names else column_names[0]
+    title_column_name = "title" if "title" in column_names else column_names[0]
     context_column_name = "context" if "context" in column_names else column_names[1]
-    answer_column_name = "answers" if "answers" in column_names else column_names[2]
-
-    # Padding에 대한 옵션을 설정합니다.
-    # (question|context) 혹은 (context|question)로 세팅 가능합니다.
-    pad_on_right = tokenizer.padding_side == "right"
+    question_column_name = "question" if "question" in column_names else column_names[2]
+    answer_column_name = "answers" if "answers" in column_names else column_names[4]
 
     # 오류가 있는지 확인합니다.
     last_checkpoint, max_seq_length = check_no_error(
@@ -153,19 +150,24 @@ def run_mrc(
     def prepare_train_features(examples):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
+        if data_args.add_title:
+            examples[question_column_name] = [
+                f"{question} {tokenizer.sep_token} ^{title}^"
+                for question, title in zip(
+                    examples[question_column_name], examples[title_column_name]
+                )
+            ]
         tokenized_examples = tokenizer(
-            examples[question_column_name if pad_on_right else context_column_name],
-            examples[context_column_name if pad_on_right else question_column_name],
+            examples[question_column_name],
+            examples[context_column_name],
             # https://huggingface.co/docs/transformers/pad_truncation#:~:text=The%20truncation%20argument%20controls%20truncation.%20It%20can%20be%20a%20boolean%20or%20a%20string%3A
-            truncation="only_second" if pad_on_right else "only_first",
+            truncation="only_second",
             max_length=max_seq_length,
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False
-            if "roberta" in model_args.model_name_or_path
-            else True,
+            return_token_type_ids=False if "roberta" in model.model_type else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -201,12 +203,12 @@ def run_mrc(
 
                 # text에서 current span의 Start token index
                 token_start_index = 0
-                while sequence_ids[token_start_index] != (1 if pad_on_right else 0):
+                while sequence_ids[token_start_index] != 1:
                     token_start_index += 1
 
                 # text에서 current span의 End token index
                 token_end_index = len(input_ids) - 1
-                while sequence_ids[token_end_index] != (1 if pad_on_right else 0):
+                while sequence_ids[token_end_index] != 1:
                     token_end_index -= 1
 
                 # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
@@ -231,6 +233,32 @@ def run_mrc(
                     while offsets[token_end_index][1] >= end_char:
                         token_end_index -= 1
                     tokenized_examples["end_positions"].append(token_end_index + 1)
+<<<<<<< HEAD
+=======
+
+            if data_args.add_title:
+                # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
+                # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
+                sep_token_indeces = []
+                for idx, id in enumerate(input_ids):
+                    if id == tokenizer.sep_token_id:
+                        sep_token_indeces.append(idx)
+
+                assert (
+                    len(sep_token_indeces) == 3
+                ), "title을 추가하는데 문제가 발생했습니다. 예기치 못한 학습이 이루어질 수 있으니 보고 바랍니다."
+
+                if "token_type_ids" in tokenized_examples.keys():
+                    for idx in range(sep_token_indeces[0] + 1, sep_token_indeces[1]):
+                        tokenized_examples["token_type_ids"][i][idx] = 1
+
+                    del tokenized_examples["token_type_ids"][i][sep_token_indeces[1]]
+
+                del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
+                del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
+                tokenized_examples["start_positions"][i] -= 1
+                tokenized_examples["end_positions"][i] -= 1
+>>>>>>> origin/feature/reader_add_title
 
         return tokenized_examples
 
@@ -254,18 +282,23 @@ def run_mrc(
     def prepare_validation_features(examples):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
+        if data_args.add_title:
+            examples[question_column_name] = [
+                f"{question} {tokenizer.sep_token} ^{title}^"
+                for question, title in zip(
+                    examples[question_column_name], examples[title_column_name]
+                )
+            ]
         tokenized_examples = tokenizer(
-            examples[question_column_name if pad_on_right else context_column_name],
-            examples[context_column_name if pad_on_right else question_column_name],
-            truncation="only_second" if pad_on_right else "only_first",
+            examples[question_column_name],
+            examples[context_column_name],
+            truncation="only_second",
             max_length=max_seq_length,
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False
-            if "roberta" in model_args.model_name_or_path
-            else True,
+            return_token_type_ids=False if "roberta" in model.model_type else True,
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -275,21 +308,45 @@ def run_mrc(
         # evaluation을 위해, prediction을 context의 substring으로 변환해야합니다.
         # corresponding example_id를 유지하고 offset mappings을 저장해야합니다.
         tokenized_examples["example_id"] = []
+        tokenized_examples["context_index"] = []
 
         for i in range(len(tokenized_examples["input_ids"])):
+            input_ids = tokenized_examples["input_ids"][i]
             # sequence id를 설정합니다 (to know what is the context and what is the question).
             sequence_ids = tokenized_examples.sequence_ids(i)
-            context_index = 1 if pad_on_right else 0
 
             # 하나의 example이 여러개의 span을 가질 수 있습니다.
             sample_index = sample_mapping[i]
             tokenized_examples["example_id"].append(examples["id"][sample_index])
+            tokenized_examples["context_index"].append(0)
 
             # Set to None the offset_mapping을 None으로 설정해서 token position이 context의 일부인지 쉽게 판별 할 수 있습니다.
             tokenized_examples["offset_mapping"][i] = [
-                (o if sequence_ids[k] == context_index else None)
+                (o if sequence_ids[k] == 1 else None)
                 for k, o in enumerate(tokenized_examples["offset_mapping"][i])
             ]
+
+            if data_args.add_title:
+                # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
+                # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
+                sep_token_indeces = []
+                for idx, id in enumerate(input_ids):
+                    if id == tokenizer.sep_token_id:
+                        sep_token_indeces.append(idx)
+
+                assert (
+                    len(sep_token_indeces) == 3
+                ), "title을 추가하는데 문제가 발생했습니다. 예기치 못한 학습이 이루어질 수 있으니 보고 바랍니다."
+
+                if "token_type_ids" in tokenized_examples.keys():
+                    for idx in range(sep_token_indeces[0] + 1, sep_token_indeces[1]):
+                        tokenized_examples["token_type_ids"][i][idx] = 1
+
+                    del tokenized_examples["token_type_ids"][i][sep_token_indeces[1]]
+
+                del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
+                del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
+                del tokenized_examples["offset_mapping"][i][sep_token_indeces[1]]
         return tokenized_examples
 
     if training_args.do_eval:

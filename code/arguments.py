@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 `ModelArguments`, `DataTrainingArguments`를 dataclass로 정의
 """
 
+
 @dataclass
 class ModelArguments:
     """
@@ -79,6 +80,12 @@ class DataTrainingArguments:
             "and end predictions are not conditioned on one another."
         },
     )
+    add_title: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether add title when build a train features. If True, the train feature will be builded as follows: [question] [SEP] ^[title]^ [SEP] [context]"
+        },
+    )
     eval_retrieval: bool = field(
         default=True,
         metadata={"help": "Whether to run passage retrieval using sparse embedding."},
@@ -95,9 +102,24 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
+    tokenizer_for_retriever: str = field(
+        default=None,
+        metadata={"help": "sparse retriever의 embedding을 만들 때 사용할 tokenizer"},
+    )
+    no_other_languages: bool = field(
+        default=False,
+        metadata={
+            "help": "retriever의 preprocessing을 수행할 때 한국어, 영어를 제외한 다른 언어를 제거할 것인지"
+        },
+    )
+    quoat_normalize: bool = field(
+        default=False,
+        metadata={
+            "help": "retriever의 preprocessing을 수행할 때 \"와 '를 제외한 따옴표를 모두 '로 통일할 것인지"
+        },
+    )
 
 
-
-if __name__=="__main__":
-    model_args=ModelArguments()
+if __name__ == "__main__":
+    model_args = ModelArguments()
     print(model_args)
