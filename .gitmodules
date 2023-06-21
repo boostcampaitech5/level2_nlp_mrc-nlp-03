@@ -1,0 +1,3 @@
+[submodule "code/question_generation/QG"]
+	path = code/question_generation/QG
+	url = https://github.com/tjddn0402/KorQuAD-Question-Generation
