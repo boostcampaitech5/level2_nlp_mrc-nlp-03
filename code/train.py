@@ -26,6 +26,7 @@ from omegaconf import DictConfig
 from datetime import datetime, timedelta, timezone
 import wandb
 from utils_viewer import eval_df2html
+from collections import defaultdict
 
 import warnings
 
@@ -139,7 +140,16 @@ def run_mrc(
     context_column_name = "context" if "context" in column_names else column_names[1]
     question_column_name = "question" if "question" in column_names else column_names[2]
     answer_column_name = "answers" if "answers" in column_names else column_names[4]
-
+    negative_title_column_name = (
+        "hard_negative_title"
+        if "hard_negative_title" in column_names
+        else column_names[8]
+    )
+    negative_context_column_name = (
+        "hard_negative_text"
+        if "hard_negative_text" in column_names
+        else column_names[6]
+    )
     # 오류가 있는지 확인합니다.
     last_checkpoint, max_seq_length = check_no_error(
         data_args, training_args, datasets, tokenizer
@@ -150,95 +160,112 @@ def run_mrc(
     def prepare_train_features(examples):
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
-        if data_args.add_title:
-            examples[question_column_name] = [
-                f"{question} {tokenizer.sep_token} ^{title}^"
-                for question, title in zip(
-                    examples[question_column_name], examples[title_column_name]
-                )
-            ]
-        tokenized_examples = tokenizer(
-            examples[question_column_name],
-            examples[context_column_name],
-            # https://huggingface.co/docs/transformers/pad_truncation#:~:text=The%20truncation%20argument%20controls%20truncation.%20It%20can%20be%20a%20boolean%20or%20a%20string%3A
-            truncation="only_second",
-            max_length=max_seq_length,
-            stride=data_args.doc_stride,
-            return_overflowing_tokens=True,
-            return_offsets_mapping=True,
-            # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
-            return_token_type_ids=False if "roberta" in model.model_type else True,
-            padding="max_length" if data_args.pad_to_max_length else False,
-        )
+        tokenized_examples = defaultdict(list)
+        for i in range(len(examples[question_column_name])):
+            question = examples[question_column_name][i]
+            titles = [examples[title_column_name][i]] + examples[
+                negative_title_column_name
+            ][i][: data_args.train_num_negative_samples]
+            contexts = [examples[context_column_name][i]] + examples[
+                negative_context_column_name
+            ][i][: data_args.train_num_negative_samples]
 
-        # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
-        sample_mapping = tokenized_examples.pop("overflow_to_sample_mapping")
-        # token의 캐릭터 단위 position를 찾을 수 있도록 offset mapping을 사용합니다.
-        # start_positions과 end_positions을 찾는데 도움을 줄 수 있습니다.
-        offset_mapping = tokenized_examples.pop("offset_mapping")
+            tokenized = tokenizer(
+                [
+                    f"{question} {tokenizer.sep_token} ^{title}^"
+                    if data_args.add_title
+                    else question
+                    for title in titles
+                ],
+                contexts,
+                # https://huggingface.co/docs/transformers/pad_truncation#:~:text=The%20truncation%20argument%20controls%20truncation.%20It%20can%20be%20a%20boolean%20or%20a%20string%3A
+                truncation="only_second",
+                max_length=max_seq_length,
+                stride=data_args.doc_stride,
+                return_overflowing_tokens=True,
+                return_offsets_mapping=True,
+                # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+                return_token_type_ids=False if "roberta" in model.model_type else True,
+                padding="max_length" if data_args.pad_to_max_length else False,
+            )
 
-        # 데이터셋에 "start position", "enc position" label을 부여합니다.
-        tokenized_examples["start_positions"] = []
-        tokenized_examples["end_positions"] = []
+            # 길이가 긴 context가 등장할 경우 truncate를 진행해야하므로, 해당 데이터셋을 찾을 수 있도록 mapping 가능한 값이 필요합니다.
+            sample_mapping = tokenized.pop("overflow_to_sample_mapping")
+            # token의 캐릭터 단위 position를 찾을 수 있도록 offset mapping을 사용합니다.
+            # start_positions과 end_positions을 찾는데 도움을 줄 수 있습니다.
+            offset_mapping = tokenized.pop("offset_mapping")
 
-        for i, offsets in enumerate(offset_mapping):
-            input_ids = tokenized_examples["input_ids"][i]
-            cls_index = input_ids.index(tokenizer.cls_token_id)  # cls index
+            # 데이터셋에 "start position", "end position" label을 부여합니다.
+            tokenized["start_positions"] = []
+            tokenized["end_positions"] = []
+            answers = examples[answer_column_name][i]
 
-            # sequence id를 설정합니다 (to know what is the context and what is the question).
-            sequence_ids = tokenized_examples.sequence_ids(i)
+            for j, offsets in enumerate(offset_mapping):
+                # 하나의 example이 여러개의 span을 가질 수 있습니다.
+                sample_index = sample_mapping[j]
+                input_ids = tokenized["input_ids"][j]
+                cls_index = input_ids.index(tokenizer.cls_token_id)  # cls index
 
-            # 하나의 example이 여러개의 span을 가질 수 있습니다.
-            sample_index = sample_mapping[i]
-            answers = examples[answer_column_name][sample_index]
+                # 0번이 아닌 context는 negative sample이므로 answer가 없습니다.
+                if sample_index != 0:
+                    tokenized["start_positions"].append(cls_index)
+                    tokenized["end_positions"].append(cls_index)
+                    continue
 
-            # answer가 없을 경우 cls_index를 answer로 설정합니다(== example에서 정답이 없는 경우 존재할 수 있음).
-            if len(answers["answer_start"]) == 0:
-                tokenized_examples["start_positions"].append(cls_index)
-                tokenized_examples["end_positions"].append(cls_index)
-            else:
-                # text에서 정답의 Start/end character index
-                start_char = answers["answer_start"][0]
-                end_char = start_char + len(answers["text"][0])
+                # sequence id를 설정합니다 (to know what is the context and what is the question).
+                sequence_ids = tokenized.sequence_ids(j)
 
-                # text에서 current span의 Start token index
-                token_start_index = 0
-                while sequence_ids[token_start_index] != 1:
-                    token_start_index += 1
-
-                # text에서 current span의 End token index
-                token_end_index = len(input_ids) - 1
-                while sequence_ids[token_end_index] != 1:
-                    token_end_index -= 1
-
-                # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
-                if start_char == 0 and end_char == 0:
-                    tokenized_examples["start_positions"].append(cls_index)
-                    tokenized_examples["end_positions"].append(cls_index)
-                elif not (
-                    offsets[token_start_index][0] <= start_char
-                    and offsets[token_end_index][1] >= end_char
-                ):
-                    tokenized_examples["start_positions"].append(cls_index)
-                    tokenized_examples["end_positions"].append(cls_index)
+                # answer가 없을 경우 cls_index를 answer로 설정합니다(== example에서 정답이 없는 경우 존재할 수 있음).
+                if len(answers["answer_start"]) == 0:
+                    tokenized["start_positions"].append(cls_index)
+                    tokenized["end_positions"].append(cls_index)
                 else:
-                    # token_start_index 및 token_end_index를 answer의 끝으로 이동합니다.
-                    # Note: answer가 마지막 단어인 경우 last offset을 따라갈 수 있습니다(edge case).
-                    while (
-                        token_start_index < len(offsets)
-                        and offsets[token_start_index][0] <= start_char
-                    ):
-                        token_start_index += 1
-                    tokenized_examples["start_positions"].append(token_start_index - 1)
-                    while offsets[token_end_index][1] >= end_char:
-                        token_end_index -= 1
-                    tokenized_examples["end_positions"].append(token_end_index + 1)
+                    # text에서 정답의 Start/end character index
+                    start_char = answers["answer_start"][0]
+                    end_char = start_char + len(answers["text"][0])
 
-            if data_args.add_title:
-                # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
-                # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
+                    # text에서 current span의 Start token index
+                    token_start_index = 0
+                    while sequence_ids[token_start_index] != 1:
+                        token_start_index += 1
+
+                    # text에서 current span의 End token index
+                    token_end_index = len(input_ids) - 1
+                    while sequence_ids[token_end_index] != 1:
+                        token_end_index -= 1
+
+                    # 정답이 span을 벗어났는지 확인합니다(정답이 없는 경우 CLS index로 label되어있음).
+                    if start_char == 0 and end_char == 0:
+                        tokenized["start_positions"].append(cls_index)
+                        tokenized["end_positions"].append(cls_index)
+                    elif not (
+                        offsets[token_start_index][0] <= start_char
+                        and offsets[token_end_index][1] >= end_char
+                    ):
+                        tokenized["start_positions"].append(cls_index)
+                        tokenized["end_positions"].append(cls_index)
+                    else:
+                        # token_start_index 및 token_end_index를 answer의 끝으로 이동합니다.
+                        # Note: answer가 마지막 단어인 경우 last offset을 따라갈 수 있습니다(edge case).
+                        while (
+                            token_start_index < len(offsets)
+                            and offsets[token_start_index][0] <= start_char
+                        ):
+                            token_start_index += 1
+                        tokenized["start_positions"].append(token_start_index - 1)
+                        while offsets[token_end_index][1] >= end_char:
+                            token_end_index -= 1
+                        tokenized["end_positions"].append(token_end_index + 1)
+
+            for k, v in tokenized.items():
+                tokenized_examples[k].extend(v)
+
+        if data_args.add_title:
+            # 현재는 [question] [SEP] [title] [SEP] [context] 형태고, token type ids도 순서대로 [0, 0, 0, 0, 1]입니다.
+            # [question] [SEP] [title] [context]로 바꾸고, token type ids도 [0, 0, 1, 1]로 바꾸어줍니다.
+            for i in range(len(tokenized_examples["input_ids"])):
                 sep_token_indeces = []
-                for idx, id in enumerate(input_ids):
+                for idx, id in enumerate(tokenized_examples["input_ids"][i]):
                     if id == tokenizer.sep_token_id:
                         sep_token_indeces.append(idx)
 
@@ -254,8 +281,9 @@ def run_mrc(
 
                 del tokenized_examples["input_ids"][i][sep_token_indeces[1]]
                 del tokenized_examples["attention_mask"][i][sep_token_indeces[1]]
-                tokenized_examples["start_positions"][i] -= 1
-                tokenized_examples["end_positions"][i] -= 1
+                if tokenized_examples["start_positions"][i] > 0:
+                    tokenized_examples["start_positions"][i] -= 1
+                    tokenized_examples["end_positions"][i] -= 1
 
         return tokenized_examples
 
