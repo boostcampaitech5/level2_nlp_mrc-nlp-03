@@ -6,6 +6,8 @@ pad_to_max_length: false
 doc_stride: 128
 max_answer_length: 30
 add_title: true # true인 경우, 잘려진 passage마다 제목이 ^title^ passage 형태로 붙습니다.
+train_num_negative_samples: 1 # reader 학습 시 추가해줄 negative sample의 갯수
+eval_num_negative_samples: 20 # reader 검증 시 추가해줄 negative sample의 갯수
 eval_retrieval: true
 num_clusters: 64
 top_k_retrieval: 10
