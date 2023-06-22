@@ -86,6 +86,14 @@ class DataTrainingArguments:
             "help": "Whether add title when build a train features. If True, the train feature will be builded as follows: [question] [SEP] ^[title]^ [SEP] [context]"
         },
     )
+    train_num_negative_samples: int = field(
+        default=0,
+        metadata={"help": "Number of negative samples to add when training reader"},
+    )
+    eval_num_negative_samples: int = field(
+        default=20,
+        metadata={"help": "Number of negative samples to add when evaluate reader"},
+    )
     eval_retrieval: bool = field(
         default=True,
         metadata={"help": "Whether to run passage retrieval using sparse embedding."},
