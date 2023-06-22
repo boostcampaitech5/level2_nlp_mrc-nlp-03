@@ -84,6 +84,11 @@ def main(cfg: DictConfig):
     else:
         datasets = load_dataset(data_args.dataset_name)
 
+
+    if data_args.augment_path:
+        aug_data=load_from_disk(data_args.augment_path)
+        datasets['train']=concatenate_datasets([datasets['train'],aug_data])
+
     print(datasets)
 
     # AutoConfig를 이용하여 pretrained model 과 tokenizer를 불러옵니다.

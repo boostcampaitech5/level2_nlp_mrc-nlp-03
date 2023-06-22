@@ -43,6 +43,9 @@ class DataTrainingArguments:
         default="./data/train_dataset",
         metadata={"help": "The name of the dataset to use."},
     )
+    augment_path: Optional[str] = field(
+        default="./data/question_generation",
+    )
     overwrite_cache: bool = field(
         default=False,
         metadata={"help": "Overwrite the cached training and evaluation sets"},
